@@ -21,7 +21,7 @@
 
     Where: put this file inside the VBridger install folder, next to
            VBridger.exe (the folder that contains VBridger_Data\level2).
-           It looks there only - no disk scanning. -GameDir overrides.
+           It looks there only - no disk scanning. -InstallDir overrides.
 
     Usage (close VBridger first):
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -DryRun
@@ -33,7 +33,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$GameDir = '',
+    [string]$InstallDir = '',
     [switch]$DryRun,
     [switch]$Restore,
     [switch]$Force
@@ -154,14 +154,14 @@ function Show-Candidates {
 }
 
 # ============================================================== main flow
-$root = Resolve-VbRoot -Given $GameDir
+$root = Resolve-VbRoot -Given $InstallDir
 if (-not $root) {
     Write-Err2 'No VBridger install found in this script folder.'
     Write-Note ('script folder: ' + $PSScriptRoot)
     Write-Note 'Expected VBridger_Data\level2 inside that same folder.'
     Write-Note 'Fix: copy Patch-VBridgerNoPreview.ps1 and VBridger-NoPreview.cmd'
     Write-Note '     into the VBridger folder (next to VBridger.exe), then run again.'
-    Write-Note 'Or point at it once with: -GameDir "<path to VBridger folder>"'
+    Write-Note 'Or point at it once with: -InstallDir "<path to VBridger folder>"'
     exit 2
 }
 
@@ -171,7 +171,7 @@ $ggm     = Join-Path $dataDir 'globalgamemanagers'
 $managed = Join-Path $dataDir 'Managed\Assembly-CSharp.dll'
 
 Write-Head 'Environment'
-Write-Ok ('game folder: ' + $root)
+Write-Ok ('install folder: ' + $root)
 foreach ($f in @($level2, $ggm)) {
     if (-not (Test-Path -LiteralPath $f -PathType Leaf)) {
         Write-Err2 ('missing file: ' + $f)
@@ -186,7 +186,7 @@ if (-not (Test-Path -LiteralPath $managed -PathType Leaf)) {
 $proc = Get-Process -Name 'VBridger' -ErrorAction SilentlyContinue
 if ($proc -and -not $Restore) {
     if (-not $Force) {
-        Write-Err2 'VBridger is running. Exit the game completely first (or add -Force).'
+        Write-Err2 'VBridger is running. Exit VBridger completely first (or add -Force).'
         exit 2
     }
     Write-Warn2 'VBridger is running, continuing because -Force was given.'
@@ -211,7 +211,7 @@ if ($ggmVer -and ($ggmVer -ne $ExpectedUnityVersion)) { $verWarn = $true }
 if ($unityVer -and ($unityVer -ne $ExpectedUnityVersion)) { $verWarn = $true }
 if ($verWarn) {
     Write-Warn2 ('Unity version differs from the version this script targets (' + $ExpectedUnityVersion + ').')
-    Write-Warn2 'The game was probably updated. Record layout is re-validated below; if it does not match, nothing is written.'
+    Write-Warn2 'VBridger was probably updated. Record layout is re-validated below; if it does not match, nothing is written.'
 } else {
     Write-Ok ('Unity version matches: ' + $ExpectedUnityVersion)
 }
@@ -372,13 +372,13 @@ if (-not $okAll) {
     exit 3
 }
 
-# remember fingerprint so a later run can tell whether the game was updated
+# remember fingerprint so a later run can tell whether VBridger was updated
 try {
     if ($PSScriptRoot) {
         $statePath = Join-Path $PSScriptRoot 'VBridgerPatchState.json'
         $state = [pscustomobject]@{
             PatchedAt    = (Get-Date).ToString('s')
-            GameDir      = $root
+            InstallDir   = $root
             UnityVersion = $ggmVer
             Level2Before = [pscustomobject]@{ Size = $origSize; Sha256 = $origHash }
             PatchedNames = @($todo | ForEach-Object { $_.Name })

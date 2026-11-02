@@ -15,7 +15,7 @@ keeps working exactly as before.
 - Close VBridger completely (tray icon included).
 - Put `Patch-VBridgerNoPreview.ps1` and one of the two `.cmd` launchers into the **VBridger
   folder** (the one containing `VBridger.exe` and `VBridger_Data\level2`). The script only
-  looks for the game files in that folder.
+  looks for the VBridger files in that folder.
 - Windows with PowerShell 5.1 or newer (Windows 10/11 built-in is fine). No admin rights,
   no network access.
 
@@ -115,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 
 `-Restore` (or menu `3`) copies the newest `level2.bak_*` back over `level2` and re-verifies
 that `BridgitFullbody` is active again. You can also delete the patched `level2` and rename a
-backup to `level2`. Or use Steam: *Properties -> Installed Files -> Verify integrity of game
+backup to `level2`. Or use Steam: *Properties -> Installed Files -> Verify integrity of
 files*, which also restores the original.
 
 ## After a VBridger / Steam update
@@ -130,7 +130,7 @@ see which field moved. It never writes blind.
 | code | meaning |
 |------|---------|
 | 0 | success, or nothing to do (already patched) |
-| 1 | structure check failed — the game changed, nothing was written |
+| 1 | structure check failed — VBridger changed, nothing was written |
 | 2 | environment error (wrong folder, VBridger running, unreadable file) |
 | 3 | write or post-write verification failed — backup was restored automatically |
 
@@ -154,7 +154,8 @@ see which field moved. It never writes blind.
   (that disables the whole GUI, and VBridger then needs a manual connect click every launch).
 - It does not change tracking quality, calibration, or any output parameter.
 - It does not redistribute, modify or reverse-distribute any file from VBridger.
-  No game data is included in this repository — the tool only rewrites one byte on your machine.
+  No VBridger files are included in this repository — the tool only rewrites one byte on your
+  machine.
 
 ## Disclaimer
 

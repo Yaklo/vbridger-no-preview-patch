@@ -13,7 +13,7 @@
 
 - 完全退出 VBridger（托盘、任务栏都不要留）。
 - 把 `Patch-VBridgerNoPreview.ps1` 和一个 `.cmd` 启动器放进 **VBridger 安装目录**
-  （与 `VBridger.exe`、`VBridger_Data\level2` 同级）。脚本只在这个目录里找游戏文件。
+  （与 `VBridger.exe`、`VBridger_Data\level2` 同级）。脚本只在这个目录里找 VBridger 的文件。
 - Windows + PowerShell 5.1 及以上（Win10/11 自带即可）。不需要管理员权限，不联网。
 
 **三步搞定**
@@ -103,7 +103,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 ## 回滚
 
 菜单 `3` 或 `-Restore` 会把最新的 `level2.bak_*` 复制回 `level2` 并复验。
-也可以手动删掉 `level2`、把备份改名回来，或者用 Steam：*属性 → 已安装文件 → 验证游戏文件完整性*。
+也可以手动删掉 `level2`、把备份改名回来，或者用 Steam：*属性 → 已安装文件 → 验证文件完整性*。
 
 ## VBridger / Steam 更新之后
 
@@ -138,7 +138,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 - 不降低窗口分辨率，也与 `-batchmode -nographics` 无关（那会把整个 GUI 关掉，导致每次启动
   都要手动点一次连接）。
 - 不改动追踪质量、校准或任何输出参数。
-- 不包含、不修改、不再分发 VBridger 的任何文件。本仓库里没有任何游戏数据，工具只在你自己的
+- 不包含、不修改、不再分发 VBridger 的任何文件。本仓库里没有任何 VBridger 的文件，工具只在你自己的
   机器上改那 1 个字节。
 
 ## 免责声明
