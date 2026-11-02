@@ -1,0 +1,31 @@
+# --- VBridger game files: never commit these -------------------------------
+VBridger_Data/
+level2
+level2.bak_*
+*.bak_*
+Assembly-CSharp.dll
+globalgamemanagers
+globalgamemanagers.assets
+sharedassets*
+resources.assets
+*.assets
+
+# --- local state / secrets ------------------------------------------------
+VBridgerPatchState.json
+token.json
+*.vbsettings
+InputCurvesBck.vbsettings
+
+# --- logs ----------------------------------------------------------------
+*.log
+Player*.log
+
+# --- runtimes / caches (kept out of the repo on purpose) ------------------
+pwsh/
+
+# --- editors / OS ---------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

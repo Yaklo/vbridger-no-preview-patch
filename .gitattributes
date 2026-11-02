@@ -1,0 +1,16 @@
+# Normalize text files, but never touch bytes we do not own.
+* text=auto
+
+# VBridger-NoPreview.cmd is intentionally GBK-encoded (Chinese menu text) with
+# CRLF line endings, because cmd.exe on a zh-CN system reads batch files with the
+# ANSI/OEM code page and has no BOM support. Marking it "-text" keeps Git from
+# rewriting its line endings or treating it as UTF-8, which would turn the menu
+# into mojibake or break parsing. Do not "fix" this file to UTF-8.
+*.cmd -text
+
+# PowerShell handles both line endings; CRLF is friendlier for Windows users.
+*.ps1 text eol=crlf
+*.md  text eol=lf
+LICENSE text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
