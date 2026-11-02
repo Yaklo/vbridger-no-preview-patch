@@ -3,6 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 set "PS1=%~dp0Patch-VBridgerNoPreview.ps1"
+set "ACT="
 
 if not exist "%PS1%" (
     echo [ERROR] Patch-VBridgerNoPreview.ps1 must sit in this same folder.
@@ -10,6 +11,14 @@ if not exist "%PS1%" (
     pause
     exit /b 2
 )
+
+rem 直传参数：check / apply / restore
+rem 带参数时不进菜单、不再确认，执行完就退出，并返回脚本自己的退出码，
+rem 方便快捷方式、计划任务和批处理调用
+if /i "%~1"=="check"   goto :arg_check
+if /i "%~1"=="apply"   goto :arg_apply
+if /i "%~1"=="restore" goto :arg_restore
+if not "%~1"=="" goto :bad_arg
 
 rem 这个文件用 GBK 保存，中文只在 936 代码页下正常显示
 set "CP="
@@ -23,11 +32,6 @@ if not "%CP%"=="936" (
     echo.
     pause
 )
-
-rem 也支持直接带参数 / direct arguments: check / apply / restore
-if /i "%~1"=="check"   goto :check
-if /i "%~1"=="apply"   goto :apply
-if /i "%~1"=="restore" goto :restore
 
 :menu
 cls
@@ -53,11 +57,30 @@ echo 无效输入 / invalid input: "%pick%"
 timeout /t 2 >nul
 goto :menu
 
+:arg_check
+set "ACT=check"
+goto :check
+
+:arg_apply
+set "ACT=apply"
+goto :apply
+
+:arg_restore
+set "ACT=restore"
+goto :restore
+
+:bad_arg
+echo [错误]  未知参数：%~1
+echo         可用参数：check / apply / restore，不带参数则打开菜单。
+pause
+exit /b 2
+
 :check
 cls
 echo === 1. 自检 / dry run  -  不写入任何文件 / writes nothing ===
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -DryRun
+if defined ACT exit /b %errorlevel%
 goto :back
 
 :apply
@@ -67,11 +90,14 @@ echo.
 echo 先完全退出 VBridger，否则会被拒绝执行。
 echo Close VBridger completely first, or the patch is refused.
 echo.
+if defined ACT goto :do_apply
 set "yn="
 set /p "yn=确认执行? / continue? (Y/N): "
 if /i not "%yn%"=="Y" goto :menu
+:do_apply
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
+if defined ACT exit /b %errorlevel%
 goto :back
 
 :restore
@@ -81,11 +107,14 @@ echo.
 echo 用最新的 level2.bak_* 备份覆盖当前 level2。
 echo The newest level2.bak_* backup is copied back over level2.
 echo.
+if defined ACT goto :do_restore
 set "yn="
 set /p "yn=确认执行? / continue? (Y/N): "
 if /i not "%yn%"=="Y" goto :menu
+:do_restore
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -Restore
+if defined ACT exit /b %errorlevel%
 goto :back
 
 :back
