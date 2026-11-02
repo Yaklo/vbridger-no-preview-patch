@@ -1,179 +1,140 @@
 # vbridger-no-preview-patch
 
-**非官方补丁。** 让 VBridger 不再渲染窗口里的 3D 预览模型（省 GPU），而数据链路
-—— iFacialMocap / FaceMotion3D 输入 → VMC / VTube Studio / OSC 输出 —— 完全不受影响。
+**非官方补丁。** 让 VBridger 不再渲染窗口里的 3D 预览模型（省 GPU），而整条数据链路
+（手机 iFacialMocap / FaceMotion3D 输入 -> VMC / VTube Studio / OSC 输出）完全照旧工作。
 
-[English](README.md)
+[English README](README.md)
 
 ---
 
 ## 快速开始
 
-**前置条件**
-
-- 完全退出 VBridger（托盘、任务栏都不要留）。
-- 把 `Patch-VBridgerNoPreview.ps1` 和一个 `.cmd` 启动器放进 **VBridger 安装目录**
-  （与 `VBridger.exe`、`VBridger_Data\level2` 同级）。脚本只在这个目录里找 VBridger 的文件。
-- Windows + PowerShell 5.1 及以上（Win10/11 自带即可）。不需要管理员权限，不联网。
-
-**三步搞定**
-
-1. 复制 `Patch-VBridgerNoPreview.ps1` 和 `VBridger-NoPreview-zh.cmd` 到 VBridger 目录
-   （英文环境用 `VBridger-NoPreview.cmd`，见下方对照表）。
-2. 双击 `VBridger-NoPreview-zh.cmd`，菜单是中英双语的：
+1. 完全退出 VBridger（托盘图标也要退）。
+2. 把 `Patch-VBridgerNoPreview.ps1` 和 `VBridger-NoPreview-zh.cmd` 放到 **VBridger 安装目录**，
+   也就是 `VBridger.exe` 和 `VBridger_Data\level2` 所在的那一层。脚本只在这个目录里找文件。
+3. 双击 `VBridger-NoPreview-zh.cmd`：
 
    ```text
    ==========================================================
       VBridger 3D 预览补丁 / no-preview patch   -  unofficial
    ==========================================================
 
-      1. 自检    check     - 只检查，不写入文件 / dry run
-      2. 打补丁  apply     - 改 1 个字节，停止渲染 / patch it
-      3. 回滚    rollback  - 用备份还原 level2 / restore it
-      0. 退出    exit
+      1. 自检      - 只读，不写任何文件
+      2. 打补丁    - 先备份 level2，再改 1 个字节
+      3. 回滚      - 用最新备份还原 level2
+      0. 退出
 
+      英文菜单：VBridger-NoPreview.cmd
    ==========================================================
 
-   请输入编号 / enter number [0-3]:
+   请输入序号 [0-3]:
    ```
 
-3. 先按 `1` 自检，看输出里的偏移和记录判别是否与下表一致；确认无误再按 `2` 打补丁。
+4. 先按 `1` 看看会改什么，再按 `2`。
 
-打完补丁后，VBridger 窗口里的预览区会变成空白/黑屏，**这是预期效果**。面捕输入、
-Send Face Found Status、VMC 输出（默认端口 39539）、VTube Studio WebSocket 连接都不受影响。
+打过补丁之后，VBridger 窗口里的预览区会变成空白/黑屏，这正是目的。面捕输入、Send Face Found
+Status、VMC 输出（默认端口 39539）、VTube Studio 的 WebSocket 连接都不受影响。
 
-**两个启动器怎么选**
+Windows PowerShell 5.1 或更高版本即可（Win10/11 自带）。不需要管理员权限，不联网。
 
-| 文件 | 菜单语言 | 编码 | 适用 |
-|------|----------|------|------|
-| `VBridger-NoPreview-zh.cmd` | 中英双语 | GBK | 中文 Windows（代码页 936） |
-| `VBridger-NoPreview.cmd` | 纯英文 | 纯 ASCII | 任何语言 / 任何代码页，绝不会乱码 |
+**用哪个启动器**
 
-两个文件功能完全一样，都是调用同一个 `Patch-VBridgerNoPreview.ps1`。GBK 只在代码页 936 下
-正常显示，所以英文版单独留了一份纯 ASCII 的；如果你在非 936 的机器上误点了中文版，它会先
-用英文提示你改用 `VBridger-NoPreview.cmd`，不会一句都看不懂。
+| 文件 | 菜单语言 | 编码 |
+|------|----------|------|
+| `VBridger-NoPreview.cmd` | 英文 | 纯 ASCII —— 任何代码页都不会乱码 |
+| `VBridger-NoPreview-zh.cmd` | 中文 + 英文 | GBK（代码页 936）；其它代码页会先提示再继续 |
 
-两者都支持直接传参，方便做快捷方式、计划任务或批处理：`<文件名> check|apply|restore`。
-带参数时只做这一件事，不再弹确认，执行完立刻退出并返回脚本自己的退出码，不会停在菜单里；
-参数写错会直接报错并返回 `2`。
+两者调用同一个脚本，也都支持直接传参数 `check` / `apply` / `restore`：只执行这一个动作，
+跳过确认，返回脚本的退出码。
 
-## 为什么需要它
+## 为什么
 
-VBridger 的本职工作是**接收手机传来的面捕数据并转发给别的软件**。窗口里那个 3D 角色只是
-给你看的，但它始终挂着完整骨骼和几十个 BlendShape，每一帧都在渲染。你如果不看它，那就是
-纯粹的浪费：GPU 占用、发热、风扇转速。
+VBridger 的本职是接收手机传来的面捕数据、再转发给别的软件。窗口里那个 3D 角色只是给你看的，
+但它带着整套骨骼和几十个表情 morph，每帧都在渲染。如果你根本不看它，那就是纯粹的 GPU 浪费。
 
-VBridger 设置里并没有关闭预览的开关（齿轮菜单里的"face"只是临时切换，且不持久，每次启动
-又会自动打开）。这个补丁从场景层面把预览模型关掉，什么都不会画，而所有接收/转发脚本原样保留。
+软件界面里根本没有关闭 3D 预览的选项，只要 VBridger 在跑，它就一直在画。这个补丁把 Unity
+场景里负责预览的几个对象置为不激活，于是什么都不画，而所有接收/转发数据的脚本一个都没动。
 
-## 具体改了什么
+## 改了什么
 
 只改 `VBridger_Data\level2` 里的**一个字节** —— 全身预览模型 `BridgitFullbody` 的
-`m_IsActive` 标志（1 → 0）。另外两个预览对象在官方版本里本来就是关闭的，脚本会确认后跳过。
+`m_IsActive` 标志（1 -> 0）。另外两个预览对象在当前版本里本来就是 0，脚本只做确认、不去动它。
 
-| 对象 | 作用 | 名字偏移 | `m_IsActive` 字节 | 原始值 | 打完补丁 |
-|------|------|----------|--------------------|--------|----------|
-| `BridgitFullbody` | 全身预览模型 | 110820 | **110838** | 1 | **0** |
-| `Bridgit` | 头部/半身预览模型 | 108272 | 108282 | 0 | 0（不动） |
-| `bridgeface3` | 备用预览网格 | 108112 | 108126 | 0 | 0（不动） |
-| `iFacialMocapTestObj` | **数据链路根对象** | 108224 | 108246 | 1 | 1（**永不修改**） |
+| 对象                  | 作用                    | 名字偏移 | `m_IsActive` 偏移 | 出厂值 | 打补丁后 |
+|-----------------------|-------------------------|----------|--------------------|--------|----------|
+| `BridgitFullbody`      | 全身预览模型            | 110820   | **110838**         | 1      | **0**    |
+| `Bridgit`              | 头部/半身预览           | 108272   | 108282             | 0      | 0（不动）|
+| `bridgeface3`          | 备用预览网格            | 108112   | 108126             | 0      | 0（不动）|
+| `iFacialMocapTestObj`   | **数据链路根节点**      | 108224   | 108246             | 1      | 1（**永不修改**）|
 
-接收/转发脚本（`UnityRecieve_iFacialMocapCustom`、`UnityRecieve_FACEMOTION3D`、
-`SendShape`、`GetShapeKeys`、`VMCSend`、`uOscClient`、`VTSWebSocket`）全部挂在
-`iFacialMocapTestObj` 上，本补丁不会碰它。程序集里没有任何代码通过引用持有这三个预览对象，
-所以把它们关掉不会引发空引用。
+接收/转发相关的脚本（`UnityRecieve_iFacialMocapCustom`、`UnityRecieve_FACEMOTION3D`、
+`SendShape`、`GetShapeKeys`、`VMCSend`、`uOscClient`、`VTSWebSocket`）全挂在
+`iFacialMocapTestObj` 上，本补丁不碰它。程序集里没有任何代码引用这几个预览对象，所以关掉它们
+不会在运行时引发空引用。
 
-已在 `level2` 为 412672 字节、SHA-256 为
+已验证的版本：`level2` 为 412672 字节，SHA-256
 `2F177FB02D57D1600E4DF65A13E5E92BAE951AC9181D4186FA61B9A7396E9B52`
-的版本上验证（Unity `2020.3.33f1`，Mono 后端）。
+（Unity `2020.3.33f1`，Mono 后端）。
 
-## 命令行用法
+## 三个动作
 
-不想用菜单，也可以直接跑 PowerShell：
+| 菜单 | 命令行 | 做什么 |
+|------|--------|--------|
+| 1 | `-Check` | 读取 `level2`，告诉你会改几个字节。不写文件、不生成备份。 |
+| 2 | *（不带参数）* | 先把 `level2` 复制成 `level2.bak_<yyyyMMdd-HHmmss>`，再清零标志，然后逐字节复验。 |
+| 3 | `-Restore` | 把最新的 `level2.bak_*` 复制回去并复验。加 `-Check` 可以只预览。 |
 
 ```powershell
-# 只检查，不写入
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -DryRun
+# 只自检
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Check
 
-# 打补丁（先自动备份 level2.bak_<时间戳>，写完自动复验）
+# 打补丁，然后回滚
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1
-
-# 回滚
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
-
-# 脚本放在任何位置都能跑，不必复制进 VBridger 目录
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -InstallDir "D:\Steam\steamapps\common\VBridger" -DryRun
 ```
-
-| 参数 | 作用 |
-|------|------|
-| `-DryRun` | 只检查，不写入；与 `-Restore` 组合时只报告回滚会怎么做，不会真的覆盖 `level2`；VBridger 开着也能跑 |
-| `-Restore` | 把最新的 `level2.bak_*` 复制回 `level2` |
-| `-InstallDir <路径>` | 直接指定 VBridger 目录，脚本不必放在那里；该路径会记进 `VBridgerPatchState.json` |
-| `-Force` | VBridger 仍在运行时继续，以及接受"看起来属于别的版本"的备份（见「安全设计」） |
-
-## 回滚
-
-菜单 `3` 或 `-Restore` 会把最新的 `level2.bak_*` 复制回 `level2` 并复验。回滚同样要求先退出
-VBridger，否则会被拒绝（退出码 `2`，`-Force` 可强行继续）。想先看结果再决定，加 `-DryRun`：
-它会告诉你会用哪一份备份、这份备份会不会被接受，但不写任何文件。
-
-也可以手动删掉 `level2`、把备份改名回来，或者用 Steam：*属性 → 已安装文件 → 验证文件完整性*。
-
-旧的 `level2.bak_*` 可以随时删掉 —— 只会用到最新的一份，留一两份就够。
-
-## VBridger / Steam 更新之后
-
-更新会覆盖 `level2`，补丁自然失效 —— 再跑一次即可。如果新版本改了场景结构，脚本会**拒绝写入**
-并以退出码 `1` 结束，同时打印它找到的每一条候选记录（长度前缀、`m_Layer`、`m_Tag`、
-`m_IsActive`），方便判断是哪一项变了。它不会盲目写。
-
-## 退出码
 
 | 退出码 | 含义 |
 |--------|------|
-| 0 | 成功，或无需处理（已是关闭状态） |
-| 1 | 结构校验失败，或回滚被拒绝 —— 未写入任何内容 |
-| 2 | 环境问题（目录不对、VBridger 正在运行、文件读不了） |
-| 3 | 写入、备份复制或写后复验失败 —— `level2` 未被改动，或已自动回滚到备份 |
+| 0 | 成功，或无需处理（已打过补丁 / 没有可还原的东西）|
+| 1 | 文件不像这个脚本认识的 `level2`（当前安装，或者要还原的那份备份）—— 什么都没写 |
+| 2 | 环境问题（脚本不在 `VBridger_Data` 旁边、文件不存在、读不了）|
+| 3 | 写入或复制失败，或复验没过 —— 备份还在 |
 
 ## 安全设计
 
-- **先校验再动手**：检查 Unity 版本串，以及每个目标的名字记录布局
-  （4 字节长度前缀与名字长度一致、`m_Layer == 0`、`m_Tag == 0`、`m_IsActive` 只能是 0/1）。
-  这样可以排除同名但不同类型的记录 —— `BridgitFullbody` 在文件里出现两次，只有一条是真
-  GameObject，另一条是别的对象。
-- **自动备份** `level2.bak_<yyyyMMdd-HHmmss>`，改动前就落盘，复制完立刻和 `level2` 比对哈希。
-- **原子写入**：`level2` 先写到临时文件再用 `File::Replace` 换上去，中途被打断也不会留下半截文件。
-  文件系统不支持替换（或文件被占用）时会退化成普通复制。
-- **只写 1 个字节**，文件长度不变，文件内部没有校验和会被破坏。
-- **写后复验**，对不上自动还原备份并以 `3` 退出。
-- **回滚不受结构校验阻挡**：`-Restore` 在校验之前就处理，升级后依然可用。备份按文件名里的
-  时间戳取最新的一份；如果这份备份和当前安装的版本对不上，会拒绝还原并要求加 `-Force`。
-  "对不上"是逐字节判定的：当前 `level2` 必须正好等于这份备份加上本补丁，所以即使更新后的
-  文件大小和 Unity 版本都没变，也能认出它已经被换成新版本了。大小、Unity 版本、以及
-  `VBridgerPatchState.json` 里记录的 SHA-256 也会一并核对。
-- **留痕**：`VBridger_Data\VBridgerPatchState.json` 记录路径、时间、Unity 版本、改前 SHA-256。
-  这个文件跟着安装目录走而不是跟着脚本走，所以用 `-InstallDir` 或换一份脚本副本也能读到同一条记录。
-- **回滚会顺手清理**：`-Restore` 成功、以及写后复验失败触发的自动回滚，都会删掉
-  `VBridgerPatchState.json` —— 它描述的补丁已经不存在了；留着旧的 `Level2Before`
-  哈希反而会让下一次回滚显得"可疑"。
-- 不联网、不提权、不装服务/驱动。
+- **写之前先校验结构**：每个目标记录必须有与名字长度一致的前置 4 字节长度、`m_Layer == 0`、
+  `m_Tag == 0`、`m_IsActive` ∈ {0,1}，而且整份文件里这样的记录必须**恰好一条**。这样能排掉
+  同名但不是 GameObject 的记录 —— `BridgitFullbody` 在文件里出现两次，只有一次是真的。任何
+  一条对不上就不写文件，退出码 `1`。
+- **先备份**：`level2.bak_<时间戳>`，复制完先和原文件比对一致，再动手改。
+- **只写一个字节**，文件长度不变，文件内部没有需要重算的校验和。
+- **写完复验**；复验不过就把备份复制回去，退出码 `3`。
+- 不联网、不需要管理员权限、不装服务驱动，也**没有状态文件** —— 目录里最新的那份备份就是全部
+  记录。万一回滚拿错了文件，Steam 随时能修回来。
 
-## 它不做什么
+## 软件或 Steam 更新之后
 
-- 不从场景里删除预览对象，只是让它们不参与渲染。
-- 不降低窗口分辨率，也与 `-batchmode -nographics` 无关（那会把整个 GUI 关掉，导致每次启动
-  都要手动点一次连接）。
-- 不改动追踪质量、校准或任何输出参数。
-- 不包含、不修改、不再分发 VBridger 的任何文件。本仓库里没有任何 VBridger 的文件，工具只在你自己的
-  机器上改那 1 个字节。
+更新会覆盖 `level2`，补丁随之失效 —— 重新按 `2` 再打一次即可。如果更新同时改动了场景布局，
+脚本会拒绝写入（退出码 `1`），而不是瞎猜。
 
-## 免责声明
+`level2.bak_*` 留一两份就够，旧的可以删（只会用到最新的那份）。回滚前脚本会先看一眼那份备份，
+如果它不像 `level2` 就直接拒绝、什么都不写 —— 免得一个名字对得上的野文件把安装弄坏。不用脚本
+回滚也行：把备份改名成 `level2`，或者用 Steam —— *属性 -> 已安装文件 -> 验证游戏文件完整性*。
 
-非官方、社区作品，与 PiPuProductions 无任何关联，也未获其背书。使用风险自负（脚本一定会先
-备份）。若作者反对，本仓库会下架。
+## 这个补丁不做什么
 
-## 许可证
+- 它不删除场景里的预览对象，只是让它们不渲染。
+- 它不动窗口，也不等于 `-batchmode -nographics`（那个会把整个界面关掉，于是每次启动都要手动点
+  连接）。
+- 它不改面捕质量、校准，也不改任何输出参数。
+- 它不分发、也不修改 VBridger 的原始文件。仓库里不含任何 VBridger 文件 —— 工具只在你本机上
+  改一个字节。
+
+## 免责
+
+非官方、社区维护，与 PiPuProductions 无关。风险自负；备份脚本会自动帮你做。如果作者提出异议，
+本仓库会撤下。
+
+## 许可
 
 MIT —— 见 [LICENSE](LICENSE)。
