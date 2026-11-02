@@ -12,14 +12,15 @@
 **前置条件**
 
 - 完全退出 VBridger（托盘、任务栏都不要留）。
-- 把 `Patch-VBridgerNoPreview.ps1` 和 `VBridger-NoPreview.cmd` 放进 **VBridger 安装目录**
+- 把 `Patch-VBridgerNoPreview.ps1` 和一个 `.cmd` 启动器放进 **VBridger 安装目录**
   （与 `VBridger.exe`、`VBridger_Data\level2` 同级）。脚本只在这个目录里找游戏文件。
 - Windows + PowerShell 5.1 及以上（Win10/11 自带即可）。不需要管理员权限，不联网。
 
 **三步搞定**
 
-1. 复制上面两个文件到 VBridger 目录。
-2. 双击 `VBridger-NoPreview.cmd`，菜单是中英双语的：
+1. 复制 `Patch-VBridgerNoPreview.ps1` 和 `VBridger-NoPreview-zh.cmd` 到 VBridger 目录
+   （英文环境用 `VBridger-NoPreview.cmd`，见下方对照表）。
+2. 双击 `VBridger-NoPreview-zh.cmd`，菜单是中英双语的：
 
    ```text
    ==========================================================
@@ -41,7 +42,18 @@
 打完补丁后，VBridger 窗口里的预览区会变成空白/黑屏，**这是预期效果**。面捕输入、
 Send Face Found Status、VMC 输出（默认端口 39539）、VTube Studio WebSocket 连接都不受影响。
 
-菜单也支持直接传参，方便做快捷方式：`VBridger-NoPreview.cmd check|apply|restore`。
+**两个启动器怎么选**
+
+| 文件 | 菜单语言 | 编码 | 适用 |
+|------|----------|------|------|
+| `VBridger-NoPreview-zh.cmd` | 中英双语 | GBK | 中文 Windows（代码页 936） |
+| `VBridger-NoPreview.cmd` | 纯英文 | 纯 ASCII | 任何语言 / 任何代码页，绝不会乱码 |
+
+两个文件功能完全一样，都是调用同一个 `Patch-VBridgerNoPreview.ps1`。GBK 只在代码页 936 下
+正常显示，所以英文版单独留了一份纯 ASCII 的；如果你在非 936 的机器上误点了中文版，它会先
+用英文提示你改用 `VBridger-NoPreview.cmd`，不会一句都看不懂。
+
+两者都支持直接传参，方便做快捷方式：`<文件名> check|apply|restore`。
 
 ## 为什么需要它
 

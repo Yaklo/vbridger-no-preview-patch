@@ -13,30 +13,32 @@ keeps working exactly as before.
 **Before you start**
 
 - Close VBridger completely (tray icon included).
-- Put `Patch-VBridgerNoPreview.ps1` and `VBridger-NoPreview.cmd` into the **VBridger folder**
-  (the one containing `VBridger.exe` and `VBridger_Data\level2`). The script only looks for the
-  game files in that folder.
+- Put `Patch-VBridgerNoPreview.ps1` and one of the two `.cmd` launchers into the **VBridger
+  folder** (the one containing `VBridger.exe` and `VBridger_Data\level2`). The script only
+  looks for the game files in that folder.
 - Windows with PowerShell 5.1 or newer (Windows 10/11 built-in is fine). No admin rights,
   no network access.
 
 **Three steps**
 
-1. Copy those two files into the VBridger folder.
-2. Double-click `VBridger-NoPreview.cmd`. The menu is bilingual (Chinese / English):
+1. Copy `Patch-VBridgerNoPreview.ps1` and `VBridger-NoPreview.cmd` into the VBridger folder.
+2. Double-click `VBridger-NoPreview.cmd`. It is pure ASCII, so it cannot be garbled by any
+   console code page:
 
    ```text
    ==========================================================
-      VBridger 3D 预览补丁 / no-preview patch   -  unofficial
+      VBridger no-preview patch   -  unofficial
    ==========================================================
 
-      1. 自检    check     - 只检查，不写入文件 / dry run
-      2. 打补丁  apply     - 改 1 个字节，停止渲染 / patch it
-      3. 回滚    rollback  - 用备份还原 level2 / restore it
-      0. 退出    exit
+      1. check     - dry run, writes nothing
+      2. apply     - flip 1 byte, stop rendering
+      3. rollback  - restore level2 from the newest backup
+      0. exit
 
+      Chinese menu: VBridger-NoPreview-zh.cmd
    ==========================================================
 
-   请输入编号 / enter number [0-3]:
+   enter number [0-3]:
    ```
 
 3. Press `1` first (dry run) and check that the offsets and record classification match the
@@ -46,7 +48,19 @@ After patching, the preview area of the VBridger window is expected to be empty/
 the whole point. Tracking input, Send Face Found Status, VMC output (default port 39539) and the
 VTube Studio WebSocket connection are unaffected.
 
-Direct arguments also work, handy for shortcuts: `VBridger-NoPreview.cmd check|apply|restore`.
+**Which launcher to use**
+
+| file | menu | encoding | use it when |
+|------|------|----------|-------------|
+| `VBridger-NoPreview.cmd` | English | pure ASCII | any locale, any code page — cannot be garbled |
+| `VBridger-NoPreview-zh.cmd` | Chinese + English | GBK | Chinese Windows (code page 936) |
+
+Both do exactly the same thing and call the same `Patch-VBridgerNoPreview.ps1`. The GBK file only
+displays correctly on code page 936, which is why the English one exists as a pure-ASCII twin;
+if you launch the Chinese one on a non-936 console it warns you first and points you at
+`VBridger-NoPreview.cmd`, so you are never stuck with a screen full of mojibake.
+
+Both accept direct arguments, handy for shortcuts: `<file> check|apply|restore`.
 
 ## Why
 
