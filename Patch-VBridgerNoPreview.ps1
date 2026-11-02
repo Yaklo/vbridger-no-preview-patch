@@ -15,6 +15,10 @@
       * Structural validation first (Unity version, record layout
         m_Layer / m_Tag / m_IsActive, byte fingerprint). If anything does
         not match, it aborts and writes nothing.
+      * -Restore runs before that check, so rollback still works after an
+        update. It picks the newest backup by the timestamp in its file name
+        and refuses one that belongs to a different build unless -Force is
+        given.
       * Automatic backup: level2 -> level2.bak_<timestamp>, restore with -Restore.
       * -DryRun checks only, never writes.
       * Post-write verification; on mismatch it rolls back automatically.
@@ -216,6 +220,83 @@ if ($verWarn) {
     Write-Ok ('Unity version matches: ' + $ExpectedUnityVersion)
 }
 
+# ---- restore mode
+# Handled before the structure validation on purpose: after a VBridger update
+# the record layout may no longer match, and rolling back is exactly what you
+# need in that situation.
+if ($Restore) {
+    Write-Head 'Restore'
+    # Newest backup by the timestamp in its NAME. Copy-Item keeps the source
+    # file's LastWriteTime, so file times are not a reliable ordering key.
+    $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'level2.bak_*' -File | Sort-Object -Property Name -Descending)
+    if ($baks.Count -eq 0) {
+        Write-Err2 ('no level2.bak_* backup in ' + $dataDir + ', nothing to restore.')
+        exit 2
+    }
+    $b = $baks[0]
+    Write-Note ('using backup: ' + $b.Name + '  (' + $b.Length + ' bytes)')
+    if ($proc -and -not $Force) {
+        Write-Err2 'VBridger is running. Exit it first (or add -Force).'
+        exit 2
+    }
+
+    $bHash = (Get-FileHash -LiteralPath $b.FullName -Algorithm SHA256).Hash
+    if ($bHash -eq $origHash) {
+        Write-Ok 'level2 already matches this backup, nothing to restore.'
+        exit 0
+    }
+
+    # Does this backup belong to the build that is installed right now? A
+    # Steam update leaves the old backups behind, and putting a previous
+    # version's level2 over a newer one would break the install.
+    $suspect = New-Object System.Collections.ArrayList
+    $bBytes = [System.IO.File]::ReadAllBytes($b.FullName)
+    $bVer   = Get-UnityVersionFrom -Bytes $bBytes
+    if ($b.Length -ne $origSize) {
+        [void]$suspect.Add('size differs: backup ' + $b.Length + ' bytes, current level2 ' + $origSize + ' bytes')
+    }
+    if ($bVer -and $ggmVer -and ($bVer -ne $ggmVer)) {
+        [void]$suspect.Add('Unity version differs: backup ' + $bVer + ', installed ' + $ggmVer)
+    }
+    if ($PSScriptRoot) {
+        $statePath = Join-Path $PSScriptRoot 'VBridgerPatchState.json'
+        if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+            try {
+                $st = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+                if ($st.Level2Before -and $st.Level2Before.Sha256 -and ($st.Level2Before.Sha256 -ne $bHash)) {
+                    [void]$suspect.Add('backup is not the original recorded in VBridgerPatchState.json')
+                }
+            } catch {
+                Write-Note '(patch state file unreadable, cross-check skipped)'
+            }
+        }
+    }
+    if ($suspect.Count -gt 0) {
+        foreach ($s in $suspect) { Write-Warn2 $s }
+        if (-not $Force) {
+            Write-Err2 'This backup may come from a different VBridger version. Nothing was restored.'
+            Write-Note 'level2 was left untouched. If you really want this backup, add -Force.'
+            exit 1
+        }
+        Write-Warn2 'Continuing anyway because -Force was given.'
+    }
+
+    Copy-Item -LiteralPath $b.FullName -Destination $level2 -Force
+    $rAfter = [System.IO.File]::ReadAllBytes($level2)
+    $rText = Get-Latin1String -Bytes $rAfter
+    $chk = @(Get-RecordCandidates -Bytes $rAfter -Text $rText -Name 'BridgitFullbody' | Where-Object { $_.Valid })
+    if ($chk.Count -eq 1 -and $chk[0].Active -eq 1) {
+        Write-Ok 'Restored: BridgitFullbody active=1, preview is back.'
+        exit 0
+    }
+    if ($chk.Count -eq 1) {
+        Write-Warn2 ('Restored, but BridgitFullbody active=' + $chk[0].Active + '. Check that this backup is an untouched original.')
+    } else {
+        Write-Warn2 'Restored, but the preview object could not be located in the backup.'
+    }
+    exit 0
+}
+
 # ---- structural validation
 Write-Head 'Structure check (locate preview model GameObjects)'
 $plan = New-Object System.Collections.ArrayList
@@ -262,36 +343,6 @@ if ($structFail) {
     Write-Note 'Send VBridger_Data\level2 plus globalgamemanagers back for re-analysis,'
     Write-Note 'or restore a previous backup with -Restore.'
     exit 1
-}
-
-# ---- restore mode
-if ($Restore) {
-    Write-Head 'Restore'
-    $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'level2.bak_*' -File | Sort-Object LastWriteTime -Descending)
-    if ($baks.Count -eq 0) {
-        Write-Err2 ('no level2.bak_* backup in ' + $dataDir + ', nothing to restore.')
-        exit 2
-    }
-    $b = $baks[0]
-    Write-Note ('using backup: ' + $b.Name + '  (' + $b.Length + ' bytes, ' + $b.LastWriteTime + ')')
-    if ($proc -and -not $Force) {
-        Write-Err2 'VBridger is running. Exit it first (or add -Force).'
-        exit 2
-    }
-    Copy-Item -LiteralPath $b.FullName -Destination $level2 -Force
-    $rAfter = [System.IO.File]::ReadAllBytes($level2)
-    $rText = Get-Latin1String -Bytes $rAfter
-    $chk = @(Get-RecordCandidates -Bytes $rAfter -Text $rText -Name 'BridgitFullbody' | Where-Object { $_.Valid })
-    if ($chk.Count -eq 1 -and $chk[0].Active -eq 1) {
-        Write-Ok 'Restored: BridgitFullbody active=1, preview is back.'
-        exit 0
-    }
-    if ($chk.Count -eq 1) {
-        Write-Warn2 ('Restored, but BridgitFullbody active=' + $chk[0].Active + '. Check that this backup is an untouched original.')
-    } else {
-        Write-Warn2 'Restored, but the preview object could not be located in the backup.'
-    }
-    exit 0
 }
 
 # ---- plan

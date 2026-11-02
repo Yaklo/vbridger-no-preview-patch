@@ -130,20 +130,24 @@ see which field moved. It never writes blind.
 | code | meaning |
 |------|---------|
 | 0 | success, or nothing to do (already patched) |
-| 1 | structure check failed — VBridger changed, nothing was written |
+| 1 | structure check failed, or a restore was refused — nothing was written |
 | 2 | environment error (wrong folder, VBridger running, unreadable file) |
 | 3 | write or post-write verification failed — backup was restored automatically |
 
 ## Safety design
 
-- **Structural validation first**: Unity version string, `level2` size, and for each target the
-  record layout (4-byte length prefix matching the name length, `m_Layer == 0`, `m_Tag == 0`,
+- **Structural validation first**: the Unity version string, and for each target the record
+  layout (4-byte length prefix matching the name length, `m_Layer == 0`, `m_Tag == 0`,
   `m_IsActive` in {0,1}). This rejects lookalike matches such as a `Mesh` that happens to share
   the name — `BridgitFullbody` appears twice in the file, only one is a real GameObject.
 - **Automatic backup** `level2.bak_<yyyyMMdd-HHmmss>` before touching anything.
 - **One byte written**, file length unchanged, no checksum in the file to invalidate.
 - **Post-write verification** by re-parsing; on mismatch it restores the backup automatically
   and exits `3`.
+- **Rollback does not depend on the structure check**: `-Restore` runs before it, so it still
+  works after an update. The newest backup is chosen by the timestamp in its file name, and a
+  backup that does not match the installed build (size, Unity version, or the SHA-256 recorded
+  in `VBridgerPatchState.json`) is refused unless you pass `-Force`.
 - **Audit trail** in `VBridgerPatchState.json` (path, timestamp, Unity version, SHA-256 before).
 - No network, no elevation, no service, no driver.
 
