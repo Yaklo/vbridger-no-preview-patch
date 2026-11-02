@@ -53,7 +53,9 @@ Send Face Found Status、VMC 输出（默认端口 39539）、VTube Studio WebSo
 正常显示，所以英文版单独留了一份纯 ASCII 的；如果你在非 936 的机器上误点了中文版，它会先
 用英文提示你改用 `VBridger-NoPreview.cmd`，不会一句都看不懂。
 
-两者都支持直接传参，方便做快捷方式：`<文件名> check|apply|restore`。
+两者都支持直接传参，方便做快捷方式、计划任务或批处理：`<文件名> check|apply|restore`。
+带参数时只做这一件事，不再弹确认，执行完立刻退出并返回脚本自己的退出码，不会停在菜单里；
+参数写错会直接报错并返回 `2`。
 
 ## 为什么需要它
 
@@ -105,15 +107,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 
 | 参数 | 作用 |
 |------|------|
-| `-DryRun` | 只检查，不写入 |
+| `-DryRun` | 只检查，不写入；与 `-Restore` 组合时只报告回滚会怎么做，不会真的覆盖 `level2` |
 | `-Restore` | 把最新的 `level2.bak_*` 复制回 `level2` |
 | `-InstallDir <路径>` | 直接指定 VBridger 目录，脚本不必放在那里；该路径会记进 `VBridgerPatchState.json` |
 | `-Force` | VBridger 仍在运行时继续，以及接受"看起来属于别的版本"的备份（见「安全设计」） |
 
 ## 回滚
 
-菜单 `3` 或 `-Restore` 会把最新的 `level2.bak_*` 复制回 `level2` 并复验。
+菜单 `3` 或 `-Restore` 会把最新的 `level2.bak_*` 复制回 `level2` 并复验。回滚同样要求先退出
+VBridger，否则会被拒绝（退出码 `2`，`-Force` 可强行继续）。想先看结果再决定，加 `-DryRun`：
+它会告诉你会用哪一份备份、这份备份会不会被接受，但不写任何文件。
+
 也可以手动删掉 `level2`、把备份改名回来，或者用 Steam：*属性 → 已安装文件 → 验证文件完整性*。
+
+旧的 `level2.bak_*` 可以随时删掉 —— 只会用到最新的一份，留一两份就够。
 
 ## VBridger / Steam 更新之后
 
@@ -128,7 +135,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 | 0 | 成功，或无需处理（已是关闭状态） |
 | 1 | 结构校验失败，或回滚被拒绝 —— 未写入任何内容 |
 | 2 | 环境问题（目录不对、VBridger 正在运行、文件读不了） |
-| 3 | 写入或写后复验失败 —— 已自动回滚到备份 |
+| 3 | 写入、备份复制或写后复验失败 —— `level2` 未被改动，或已自动回滚到备份 |
 
 ## 安全设计
 
@@ -136,13 +143,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
   （4 字节长度前缀与名字长度一致、`m_Layer == 0`、`m_Tag == 0`、`m_IsActive` 只能是 0/1）。
   这样可以排除同名但不同类型的记录 —— `BridgitFullbody` 在文件里出现两次，只有一条是真
   GameObject，另一条是别的对象。
-- **自动备份** `level2.bak_<yyyyMMdd-HHmmss>`，改动前就落盘。
+- **自动备份** `level2.bak_<yyyyMMdd-HHmmss>`，改动前就落盘，复制完立刻和 `level2` 比对哈希。
+- **原子写入**：`level2` 先写到临时文件再用 `File::Replace` 换上去，中途被打断也不会留下半截文件。
 - **只写 1 个字节**，文件长度不变，文件内部没有校验和会被破坏。
 - **写后复验**，对不上自动还原备份并以 `3` 退出。
 - **回滚不受结构校验阻挡**：`-Restore` 在校验之前就处理，升级后依然可用。备份按文件名里的
-  时间戳取最新的一份；如果这份备份和当前安装的版本对不上（大小、Unity 版本、或
-  `VBridgerPatchState.json` 里记录的 SHA-256），会拒绝还原并要求加 `-Force`。
-- **留痕**：`VBridgerPatchState.json` 记录路径、时间、Unity 版本、改前 SHA-256。
+  时间戳取最新的一份；如果这份备份和当前安装的版本对不上，会拒绝还原并要求加 `-Force`。
+  "对不上"是逐字节判定的：当前 `level2` 必须正好等于这份备份加上本补丁，所以即使更新后的
+  文件大小和 Unity 版本都没变，也能认出它已经被换成新版本了。大小、Unity 版本、以及
+  `VBridgerPatchState.json` 里记录的 SHA-256 也会一并核对。
+- **留痕**：`VBridger_Data\VBridgerPatchState.json` 记录路径、时间、Unity 版本、改前 SHA-256。
+  这个文件跟着安装目录走而不是跟着脚本走，所以用 `-InstallDir` 或换一份脚本副本也能读到同一条记录。
 - **回滚会顺手清理**：`-Restore` 成功、以及写后复验失败触发的自动回滚，都会删掉
   `VBridgerPatchState.json` —— 它描述的补丁已经不存在了；留着旧的 `Level2Before`
   哈希反而会让下一次回滚显得"可疑"。
