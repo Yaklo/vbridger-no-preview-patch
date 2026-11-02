@@ -24,4 +24,4 @@ SOFTWARE.
 
 This project is not affiliated with, endorsed by, or sponsored by
 PiPuProductions (the authors of VBridger). It contains no code, assets or data
-from VBridger; it only rewrites one byte of a local game file at runtime.
+from VBridger; it only rewrites one byte of a local VBridger file at runtime.
