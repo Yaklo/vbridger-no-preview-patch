@@ -79,7 +79,7 @@ exit /b 2
 cls
 echo === 1. 自检 / dry run  -  不写入任何文件 / writes nothing ===
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -Check
 if defined ACT exit /b %errorlevel%
 goto :back
 
@@ -87,8 +87,8 @@ goto :back
 cls
 echo === 2. 打补丁 / apply patch ===
 echo.
-echo 先完全退出 VBridger，否则会被拒绝执行。
-echo Close VBridger completely first, or the patch is refused.
+echo 先完全退出 VBridger，否则写入可能失败。
+echo Close VBridger completely first, or the write may fail.
 echo.
 if defined ACT goto :do_apply
 set "yn="

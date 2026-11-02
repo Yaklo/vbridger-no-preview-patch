@@ -27,7 +27,7 @@ echo    VBridger no-preview patch   -  unofficial
 echo ==========================================================
 echo.
 echo    1. check     - dry run, writes nothing
-echo    2. apply     - flip 1 byte, stop rendering
+echo    2. apply     - back up level2, flip 1 byte
 echo    3. rollback  - restore level2 from the newest backup
 echo    0. exit
 echo.
@@ -67,7 +67,7 @@ exit /b 2
 cls
 echo === 1. check / dry run  -  writes nothing ===
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -Check
 if defined ACT exit /b %errorlevel%
 goto :back
 
@@ -75,7 +75,7 @@ goto :back
 cls
 echo === 2. apply patch ===
 echo.
-echo Close VBridger completely first, or the patch is refused.
+echo Close VBridger completely first, or the write may fail.
 echo.
 if defined ACT goto :do_apply
 set "yn="

@@ -2,580 +2,208 @@
 <#
     Patch-VBridgerNoPreview.ps1
     ------------------------------------------------------------------
-    Stops VBridger from rendering its 3D preview model (saves GPU) while
-    keeping the whole data-forwarding pipeline (iFacialMocap / FaceMotion3D
-    -> VMC / VTS / OSC) untouched.
+    Stops VBridger from rendering its 3D preview model (saves GPU) and
+    leaves the data pipeline alone: it only clears the m_IsActive flag of
+    the preview GameObjects inside VBridger_Data\level2. The data scripts
+    sit on iFacialMocapTestObj, which is never modified, so iFacialMocap
+    input keeps reaching VMC / VTS exactly as before.
 
-    How: flips the GameObject m_IsActive flag (1 -> 0) of the preview model
-         objects Bridgit / BridgitFullbody / bridgeface3 inside
-         VBridger_Data\level2. The data scripts live on iFacialMocapTestObj,
-         which this script never modifies.
+    Usage - put this file in the VBridger folder (next to VBridger.exe):
+      ... -Check      report what would change, write nothing
+      ...             apply the patch (a backup copy is made first)
+      ... -Restore    copy the newest level2.bak_* back over level2
 
-    Safety:
-      * Structural validation first (Unity version, record layout
-        m_Layer / m_Tag / m_IsActive, byte fingerprint). If anything does
-        not match, it aborts and writes nothing.
-      * -Restore runs before that check, so rollback still works after an
-        update. It picks the newest backup by the timestamp in its file name
-        and refuses one that belongs to a different build unless -Force is
-        given.
-      * Rolling back (and the automatic rollback after a failed verification)
-        deletes VBridgerPatchState.json, so a stale fingerprint cannot make the
-        next -Restore look like a cross-version backup. The file lives in
-        VBridger_Data, next to level2.
-      * Automatic backup: level2 -> level2.bak_<timestamp>, restore with -Restore.
-      * -DryRun checks only, never writes. That includes -Restore, which then
-        reports what a rollback would do instead of overwriting level2.
-        A dry run is allowed while VBridger is open; a real run is not.
-      * Writes go through a temp file and File::Replace, so an interrupted run
-        cannot leave a half-written level2. Filesystems without replace support
-        fall back to a plain copy.
-      * Post-write verification; on mismatch it rolls back automatically.
-
-    Where: put this file inside the VBridger install folder, next to
-           VBridger.exe (the folder that contains VBridger_Data\level2).
-           It looks there only - no disk scanning. -InstallDir overrides.
-
-    Usage (close VBridger first):
-      powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -DryRun
-      powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1
-      powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
-      powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore -DryRun
-
-    Exit codes: 0 ok / nothing to do, 1 structure check failed or restore
-                refused, 2 environment error, 3 write or verify failed.
+    Exit codes: 0 ok / nothing to do, 1 the file is not the level2 this
+                script knows (nothing written), 2 environment problem,
+                3 write or copy failed (the backup is kept).
 #>
 [CmdletBinding()]
 param(
-    [string]$InstallDir = '',
-    [switch]$DryRun,
-    [switch]$Restore,
-    [switch]$Force
+    [switch]$Check,
+    [switch]$Restore
 )
 
 $ErrorActionPreference = 'Stop'
 
-$ExpectedUnityVersion = '2020.3.33f1'
-$KeepActiveName       = 'iFacialMocapTestObj'
-$ModelTargets = @(
-    [pscustomobject]@{ Name = 'BridgitFullbody'; Desc = 'full-body preview model' },
-    [pscustomobject]@{ Name = 'Bridgit';         Desc = 'half-body/head preview model' },
-    [pscustomobject]@{ Name = 'bridgeface3';     Desc = 'alternate preview model' }
-)
+$Targets  = @('BridgitFullbody', 'Bridgit', 'bridgeface3')
+$KeepName = 'iFacialMocapTestObj'
 
-# ------------------------------------------------------------- output helpers
-function Write-Head([string]$t) { Write-Host ''; Write-Host ('=== ' + $t + ' ===') -ForegroundColor Cyan }
-function Write-Ok([string]$t)   { Write-Host ('  [OK]   ' + $t) -ForegroundColor Green }
-function Write-Note([string]$t) { Write-Host ('  [..]   ' + $t) -ForegroundColor Gray }
-function Write-Warn2([string]$t){ Write-Host ('  [WARN] ' + $t) -ForegroundColor Yellow }
-function Write-Err2([string]$t) { Write-Host ('  [FAIL] ' + $t) -ForegroundColor Red }
-
-# ------------------------------------------------------------- locate install
-# The scripts are meant to live in the VBridger folder itself, next to
-# VBridger.exe. That folder is the only place they look by default - no
-# registry reading, no Steam library scan, nothing machine specific.
-function Resolve-VbRoot {
-    param([string]$Given)
-    $cands = New-Object System.Collections.ArrayList
-    if ($Given) {
-        [void]$cands.Add($Given)
-    } elseif ($PSScriptRoot) {
-        [void]$cands.Add($PSScriptRoot)
-    }
-    foreach ($c in $cands) {
-        if ([string]::IsNullOrWhiteSpace($c)) { continue }
-        if (Test-Path -LiteralPath $c -PathType Container) {
-            # VBridger_Data is the install marker, not level2 itself: if level2 is
-            # missing the main flow explains how to put a backup back, which is
-            # more useful than "no install found here".
-            if (Test-Path -LiteralPath (Join-Path $c 'VBridger_Data') -PathType Container) {
-                return (Resolve-Path -LiteralPath $c).Path
-            }
-        }
-    }
-    return $null
+function Say([string]$tag, [string]$msg) {
+    $c = 'Gray'
+    if ($tag -eq 'OK')   { $c = 'Green' }
+    if ($tag -eq 'WARN') { $c = 'Yellow' }
+    if ($tag -eq 'FAIL') { $c = 'Red' }
+    Write-Host ('  [' + $tag + '] ' + $msg) -ForegroundColor $c
 }
 
-# ------------------------------------------------------------- byte helpers
-# 1 byte -> 1 char decoder, so string indices equal byte offsets
-function Get-Latin1String {
-    param([byte[]]$Bytes)
-    if (-not $script:Latin1Enc) {
-        $script:Latin1Enc = $null
-        try { $script:Latin1Enc = [System.Text.Encoding]::Latin1 } catch { }
-        if (-not $script:Latin1Enc) { try { $script:Latin1Enc = [System.Text.Encoding]::GetEncoding(28591) } catch { } }
-        if (-not $script:Latin1Enc) { $script:Latin1Enc = [System.Text.Encoding]::ASCII }
-    }
-    return $script:Latin1Enc.GetString($Bytes)
-}
-
-function Get-UnityVersionFrom {
-    param([byte[]]$Bytes)
-    $headLen = [Math]::Min(2048, $Bytes.Length)
-    $head = New-Object byte[] $headLen
-    [Array]::Copy($Bytes, 0, $head, 0, $headLen)
-    $txt = Get-Latin1String -Bytes $head
-    $m = [regex]::Match($txt, '20\d\d\.\d+\.\d+[abfp]\d+')
-    if ($m.Success) { return $m.Value }
-    return ''
-}
-
-# Find name records in a serialized file and tell real GameObject records
-# apart from other objects (Mesh, renderer, etc.) that reuse the same name.
-function Get-RecordCandidates {
+# A real GameObject record inside level2 looks like this:
+#   [m_Layer:int32=0][nameLen:int32]["Name"][pad to 4][m_Tag:uint16=0][m_IsActive:uint8]
+# The same name also appears on other objects (a Mesh, a renderer), so the
+# layout is checked instead of trusting the first hit. Returns @{Offset;Active}
+# for the one record that matches, or $null when there is none or several.
+function Find-IsActive {
     param([byte[]]$Bytes, [string]$Text, [string]$Name)
-
     $nameLen = $Name.Length
-    $list = New-Object System.Collections.ArrayList
+    $hits = @()
     $pos = 0
     while ($true) {
         $i = $Text.IndexOf($Name, $pos, [System.StringComparison]::Ordinal)
         if ($i -lt 0) { break }
         $pos = $i + 1
         if ($i -lt 8) { continue }
-
-        $prefix = [BitConverter]::ToInt32($Bytes, $i - 4)    # m_Name length prefix
-        $layer  = [BitConverter]::ToInt32($Bytes, $i - 8)    # m_Layer (int)
+        if ([BitConverter]::ToInt32($Bytes, $i - 4) -ne $nameLen) { continue }  # length prefix
+        if ([BitConverter]::ToInt32($Bytes, $i - 8) -ne 0) { continue }         # m_Layer
         $charsEnd = $i + $nameLen
-        $pad = (4 - ($charsEnd % 4)) % 4                     # 4-byte alignment padding
-        $tagOff = $charsEnd + $pad
-        if (($tagOff + 3) -ge $Bytes.Length) { continue }
-        $tag = [BitConverter]::ToUInt16($Bytes, $tagOff)      # m_Tag (u16)
-        $activeOff = $tagOff + 2
-        $active = [int]$Bytes[$activeOff]                    # m_IsActive (u8)
-
-        $valid = ($prefix -eq $nameLen) -and ($layer -eq 0) -and ($tag -eq 0) -and (($active -eq 0) -or ($active -eq 1))
-
-        [void]$list.Add([pscustomobject]@{
-            Name         = $Name
-            NameOffset   = $i
-            PrefixOk     = ($prefix -eq $nameLen)
-            Layer        = $layer
-            Tag          = $tag
-            Active       = $active
-            ActiveOffset = $activeOff
-            Valid        = $valid
-        })
+        $tagOff = $charsEnd + ((4 - ($charsEnd % 4)) % 4)
+        if (($tagOff + 2) -ge $Bytes.Length) { continue }
+        if ([BitConverter]::ToUInt16($Bytes, $tagOff) -ne 0) { continue }       # m_Tag
+        $active = [int]$Bytes[$tagOff + 2]
+        if ($active -gt 1) { continue }                                        # m_IsActive
+        $hits += @{ Offset = $tagOff + 2; Active = $active }
     }
-    return $list.ToArray()
-}
-
-function Show-Candidates {
-    param([object[]]$Cands)
-    if (-not $Cands -or $Cands.Count -eq 0) { return }
-    foreach ($c in $Cands) {
-        $flag = 'IGNORED (not a GameObject record)'
-        if ($c.Valid) { $flag = 'VALID GameObject record' }
-        Write-Note ('  name offset ' + $c.NameOffset + '  lenPrefixOk=' + $c.PrefixOk + '  layer=' + $c.Layer + '  tag=' + $c.Tag + '  active=' + $c.Active + '  -> ' + $flag)
-    }
-}
-
-# The state file only describes an applied patch. Once level2 is rolled back it
-# is stale, and its Level2Before entry would make the next -Restore look like a
-# cross-version backup. Drop it whenever the patch is undone.
-# The file follows the install, not the script, so -InstallDir and a second copy
-# of this script still see the same record. Older versions kept it next to the
-# script; that location is read and cleaned up as well.
-function Get-PatchStatePaths {
-    $out = @()
-    if ($script:StatePath) { $out += $script:StatePath }
-    if ($script:LegacyStatePath) { $out += $script:LegacyStatePath }
-    return @($out | Select-Object -Unique)
-}
-
-function Remove-PatchState {
-    $removed = $false
-    foreach ($sp in (Get-PatchStatePaths)) {
-        if (-not (Test-Path -LiteralPath $sp -PathType Leaf)) { continue }
-        try {
-            Remove-Item -LiteralPath $sp -Force
-            $removed = $true
-        } catch {
-            Write-Note ('(could not remove ' + (Split-Path $sp -Leaf) + ', harmless)')
-        }
-    }
-    if ($removed) { Write-Note 'patch state file removed (it described the patch that was just undone)' }
-}
-
-function Get-PatchStateData {
-    foreach ($sp in (Get-PatchStatePaths)) {
-        if (-not (Test-Path -LiteralPath $sp -PathType Leaf)) { continue }
-        try { return (Get-Content -LiteralPath $sp -Raw | ConvertFrom-Json) } catch { return $null }
-    }
+    if ($hits.Count -eq 1) { return $hits[0] }
     return $null
 }
 
-# Write through a temporary file so a crash mid-write cannot leave a truncated
-# level2 behind: on NTFS File::Replace swaps the two in one step.
-function Set-FileAtomic {
-    param([string]$Path, [byte[]]$Bytes)
-    $tmp = $Path + '.tmp'
-    [System.IO.File]::WriteAllBytes($tmp, $Bytes)
-    if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        try {
-            [System.IO.File]::Replace($tmp, $Path, $null)
-            return
-        } catch {
-            # not NTFS, or the target is held open: fall back to a plain copy
-        }
-    }
-    Copy-Item -LiteralPath $tmp -Destination $Path -Force
-    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-}
+$data   = Join-Path $PSScriptRoot 'VBridger_Data'
+$level2 = Join-Path $data 'level2'
+$enc    = [System.Text.Encoding]::GetEncoding(28591)
 
-# ============================================================== main flow
-$root = Resolve-VbRoot -Given $InstallDir
-if (-not $root) {
-    Write-Err2 'No VBridger install found in this script folder.'
-    Write-Note ('script folder: ' + $PSScriptRoot)
-    Write-Note 'Expected VBridger_Data\level2 inside that same folder.'
-    Write-Note 'Fix: copy Patch-VBridgerNoPreview.ps1 and one launcher'
-    Write-Note '     (VBridger-NoPreview.cmd, or VBridger-NoPreview-zh.cmd for a Chinese menu)'
-    Write-Note '     into the VBridger folder (next to VBridger.exe), then run again.'
-    Write-Note 'Or point at it once with: -InstallDir "<path to VBridger folder>"'
+Write-Host ''
+Write-Host '=== VBridger no-preview patch ===' -ForegroundColor Cyan
+
+if (-not (Test-Path -LiteralPath $data -PathType Container)) {
+    Say 'FAIL' ('not found: ' + $data)
+    Say '..' 'Put this script in the VBridger folder (next to VBridger.exe).'
     exit 2
 }
 
-$dataDir = Join-Path $root 'VBridger_Data'
-$level2  = Join-Path $dataDir 'level2'
-$script:StatePath = Join-Path $dataDir 'VBridgerPatchState.json'
-$script:LegacyStatePath = $null
-if ($PSScriptRoot) { $script:LegacyStatePath = Join-Path $PSScriptRoot 'VBridgerPatchState.json' }
-$ggm     = Join-Path $dataDir 'globalgamemanagers'
-$managed = Join-Path $dataDir 'Managed\Assembly-CSharp.dll'
-
-Write-Head 'Environment'
-Write-Ok ('install folder: ' + $root)
-foreach ($f in @($level2, $ggm)) {
-    if (Test-Path -LiteralPath $f -PathType Leaf) { continue }
-    Write-Err2 ('missing file: ' + $f)
-    if ($f -eq $level2) {
-        # No level2 means no restore either - the script will not guess. Point at
-        # the backup instead, restoring it by hand is a plain file copy.
-        $anyBak = @(Get-ChildItem -LiteralPath $dataDir -Filter 'level2.bak_*' -File | Sort-Object -Property Name -Descending)
-        if ($anyBak.Count -gt 0) {
-            Write-Note 'A backup is available; putting it back by hand is enough:'
-            Write-Note ('  copy "' + $anyBak[0].FullName + '" "' + $level2 + '"')
-            Write-Note 'then run this script again.'
-        }
-    }
-    exit 2
-}
-Write-Ok 'VBridger_Data\level2 and globalgamemanagers found'
-if (-not (Test-Path -LiteralPath $managed -PathType Leaf)) {
-    Write-Warn2 'Managed\Assembly-CSharp.dll not found - double-check this is the VBridger folder'
-}
-
-$proc = Get-Process -Name 'VBridger' -ErrorAction SilentlyContinue
-if ($proc -and -not $Restore) {
-    if ($DryRun) {
-        # A dry run only reads, so an open VBridger is harmless here.
-        Write-Note 'VBridger is running; -DryRun writes nothing, so this is fine.'
-    } elseif (-not $Force) {
-        Write-Err2 'VBridger is running. Exit VBridger completely first (or add -Force).'
-        exit 2
-    } else {
-        Write-Warn2 'VBridger is running, continuing because -Force was given.'
-    }
-}
-
-$bytes = [System.IO.File]::ReadAllBytes($level2)
-$origSize = $bytes.Length
-$origHash = (Get-FileHash -LiteralPath $level2 -Algorithm SHA256).Hash
-$text = Get-Latin1String -Bytes $bytes
-
-$unityVer = Get-UnityVersionFrom -Bytes $bytes
-$ggmVer   = Get-UnityVersionFrom -Bytes ([System.IO.File]::ReadAllBytes($ggm))
-
-Write-Head 'Version and fingerprint'
-Write-Note ('level2 size: ' + $origSize + ' bytes')
-Write-Note ('Unity version in level2: ' + $(if ($unityVer) { $unityVer } else { '(not detected)' }))
-Write-Note ('Unity version in globalgamemanagers: ' + $(if ($ggmVer) { $ggmVer } else { '(not detected)' }))
-Write-Note ('level2 SHA256: ' + $origHash)
-
-$verWarn = $false
-if ($ggmVer -and ($ggmVer -ne $ExpectedUnityVersion)) { $verWarn = $true }
-if ($unityVer -and ($unityVer -ne $ExpectedUnityVersion)) { $verWarn = $true }
-if ($verWarn) {
-    Write-Warn2 ('Unity version differs from the version this script targets (' + $ExpectedUnityVersion + ').')
-    Write-Warn2 'VBridger was probably updated. Record layout is re-validated below; if it does not match, nothing is written.'
-} else {
-    Write-Ok ('Unity version matches: ' + $ExpectedUnityVersion)
-}
-
-# ---- restore mode
-# Handled before the structure validation on purpose: after a VBridger update
-# the record layout may no longer match, and rolling back is exactly what you
-# need in that situation.
+# ---- rollback
 if ($Restore) {
-    Write-Head 'Restore'
-    # Newest backup by the timestamp in its NAME. Copy-Item keeps the source
-    # file's LastWriteTime, so file times are not a reliable ordering key.
-    $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'level2.bak_*' -File | Sort-Object -Property Name -Descending)
+    $baks = @(Get-ChildItem -LiteralPath $data -Filter 'level2.bak_*' -File | Sort-Object -Property Name -Descending)
     if ($baks.Count -eq 0) {
-        Write-Err2 ('no level2.bak_* backup in ' + $dataDir + ', nothing to restore.')
+        Say 'FAIL' ('no level2.bak_* backup in ' + $data)
         exit 2
     }
     $b = $baks[0]
-    Write-Note ('using backup: ' + $b.Name + '  (' + $b.Length + ' bytes)')
-    if ($proc -and -not $Force -and -not $DryRun) {
-        Write-Err2 'VBridger is running. Exit it first (or add -Force).'
+    Say '..' ('backup: ' + $b.Name)
+    if (-not (Test-Path -LiteralPath $level2 -PathType Leaf)) {
+        Say '..' 'level2 is missing, it will be recreated from this backup'
+    }
+
+    # look inside the backup before overwriting anything - a stray file with
+    # the right name must not be able to destroy the install
+    try {
+        $bb = [System.IO.File]::ReadAllBytes($b.FullName)
+    } catch {
+        Say 'FAIL' ('cannot read the backup: ' + $_.Exception.Message)
         exit 2
     }
+    $bt = $enc.GetString($bb)
+    $found = 0
+    foreach ($n in $Targets) { if (Find-IsActive -Bytes $bb -Text $bt -Name $n) { $found++ } }
+    if ($found -lt $Targets.Count) {
+        Say 'FAIL' 'this backup does not look like the level2 this script knows. Nothing was written.'
+        Say '..' 'Delete that file, copy another level2.bak_* back by hand, or repair with Steam.'
+        exit 1
+    }
 
-    $bHash = (Get-FileHash -LiteralPath $b.FullName -Algorithm SHA256).Hash
-    if ($bHash -eq $origHash) {
-        Write-Ok 'level2 already matches this backup, nothing to restore.'
-        if (-not $DryRun) { Remove-PatchState }
+    if ($Check) {
+        Say 'OK' ('a real run would copy ' + $b.Name + ' over level2')
         exit 0
     }
-
-    # Does this backup belong to the build that is installed right now? A
-    # Steam update leaves the old backups behind, and putting a previous
-    # version's level2 over a newer one would break the install.
-    $suspect = New-Object System.Collections.ArrayList
-    $bBytes = [System.IO.File]::ReadAllBytes($b.FullName)
-    $bVer   = Get-UnityVersionFrom -Bytes $bBytes
-    if ($b.Length -ne $origSize) {
-        [void]$suspect.Add('size differs: backup ' + $b.Length + ' bytes, current level2 ' + $origSize + ' bytes')
-    } else {
-        # Strongest test: level2 must be exactly this backup with the preview
-        # flags cleared. Zero them in a copy of the backup and compare hashes.
-        # Anything else that differs means level2 was replaced - an update that
-        # keeps the same size and Unity version would slip past the cheap tests
-        # above and get an old build copied over a new one.
-        $bText  = Get-Latin1String -Bytes $bBytes
-        $expect = New-Object byte[] $origSize
-        [Array]::Copy($bBytes, 0, $expect, 0, $origSize)
-        foreach ($t in $ModelTargets) {
-            $bv = @(Get-RecordCandidates -Bytes $bBytes -Text $bText -Name $t.Name | Where-Object { $_.Valid })
-            if ($bv.Count -eq 1 -and $bv[0].Active -eq 1) { $expect[$bv[0].ActiveOffset] = 0 }
-        }
-        $sha = [System.Security.Cryptography.SHA256]::Create()
-        $expectHash = [System.BitConverter]::ToString($sha.ComputeHash($expect)).Replace('-', '')
-        $sha.Dispose()
-        if ($expectHash -ne $origHash) {
-            $firstDiff = -1
-            $diffCount = 0
-            for ($i = 0; $i -lt $expect.Length; $i++) {
-                if ($bytes[$i] -ne $expect[$i]) {
-                    $diffCount++
-                    if ($firstDiff -lt 0) { $firstDiff = $i }
-                }
-            }
-            $where = ''
-            if ($firstDiff -ge 0) { $where = ' (' + $diffCount + ' byte(s) differ, first at offset ' + $firstDiff + ')' }
-            [void]$suspect.Add('level2 is not this backup with the preview patch applied' + $where)
-        }
-    }
-    if ($bVer -and $ggmVer -and ($bVer -ne $ggmVer)) {
-        [void]$suspect.Add('Unity version differs: backup ' + $bVer + ', installed ' + $ggmVer)
-    }
-    $st = Get-PatchStateData
-    if ($st -and $st.Level2Before -and $st.Level2Before.Sha256 -and ($st.Level2Before.Sha256 -ne $bHash)) {
-        [void]$suspect.Add('backup is not the original recorded in VBridgerPatchState.json')
-    }
-    if ($suspect.Count -gt 0) {
-        foreach ($s in $suspect) { Write-Warn2 $s }
-        if (-not $Force) {
-            Write-Err2 'This backup may come from a different VBridger version. Nothing was restored.'
-            Write-Note 'level2 was left untouched. If you really want this backup, add -Force.'
-            exit 1
-        }
-        Write-Warn2 'Continuing anyway because -Force was given.'
-    }
-
-    if ($DryRun) {
-        Write-Head 'Result (-DryRun, nothing written)'
-        Write-Ok ('A real run would copy ' + $b.Name + ' over level2 and re-check the preview object.')
-        exit 0
-    }
-
     try {
-        Set-FileAtomic -Path $level2 -Bytes $bBytes
+        Copy-Item -LiteralPath $b.FullName -Destination $level2 -Force
+        $same = (Get-FileHash -LiteralPath $level2).Hash -eq (Get-FileHash -LiteralPath $b.FullName).Hash
     } catch {
-        Write-Err2 ('restore failed: ' + $_.Exception.Message)
-        Write-Note ('the backup is still at ' + $b.FullName + ' - run -Restore again.')
+        Say 'FAIL' ('copy failed: ' + $_.Exception.Message)
         exit 3
     }
-    Remove-PatchState
-    $rAfter = [System.IO.File]::ReadAllBytes($level2)
-    $rText = Get-Latin1String -Bytes $rAfter
-    $chk = @(Get-RecordCandidates -Bytes $rAfter -Text $rText -Name 'BridgitFullbody' | Where-Object { $_.Valid })
-    if ($chk.Count -eq 1 -and $chk[0].Active -eq 1) {
-        Write-Ok 'Restored: BridgitFullbody active=1, preview is back.'
-        exit 0
+    if (-not $same) {
+        Say 'FAIL' 'the copied file does not match the backup'
+        exit 3
     }
-    if ($chk.Count -eq 1) {
-        Write-Warn2 ('Restored, but BridgitFullbody active=' + $chk[0].Active + '. Check that this backup is an untouched original.')
-    } else {
-        Write-Warn2 'Restored, but the preview object could not be located in the backup.'
-    }
+    Say 'OK' 'restored: the 3D preview model is back'
     exit 0
 }
 
-# ---- structural validation
-Write-Head 'Structure check (locate preview model GameObjects)'
-$plan = New-Object System.Collections.ArrayList
-$structFail = $false
-
-foreach ($t in $ModelTargets) {
-    $cands = @(Get-RecordCandidates -Bytes $bytes -Text $text -Name $t.Name)
-    Write-Note ('target "' + $t.Name + '" (' + $t.Desc + '): name appears ' + $cands.Count + ' time(s)')
-    Show-Candidates -Cands $cands
-
-    $valid = @($cands | Where-Object { $_.Valid })
-    if ($valid.Count -eq 0) {
-        Write-Err2 ('no valid GameObject record for "' + $t.Name + '" - the file layout differs from what this script expects.')
-        $structFail = $true
-        continue
-    }
-    if ($valid.Count -gt 1) {
-        Write-Err2 ('"' + $t.Name + '" matched ' + $valid.Count + ' valid records, cannot decide which one to patch. Aborted.')
-        $structFail = $true
-        continue
-    }
-    [void]$plan.Add([pscustomobject]@{
-        Name   = $t.Name
-        Desc   = $t.Desc
-        Offset = $valid[0].ActiveOffset
-        Active = $valid[0].Active
-    })
+if (-not (Test-Path -LiteralPath $level2 -PathType Leaf)) {
+    Say 'FAIL' ('not found: ' + $level2)
+    Say '..' 'Nothing to patch here. Run -Restore to put a backup back.'
+    exit 2
 }
 
-# data-path root object must stay active; never touched
-$keepCands = @(Get-RecordCandidates -Bytes $bytes -Text $text -Name $KeepActiveName | Where-Object { $_.Valid })
-Write-Note ('data-path root object "' + $KeepActiveName + '": ' + $keepCands.Count + ' valid record(s)')
-if ($keepCands.Count -eq 1) {
-    Write-Ok ('"' + $KeepActiveName + '" active=' + $keepCands[0].Active + ' (never modified by this script)')
-    if ($keepCands[0].Active -ne 1) { Write-Warn2 'It is already inactive - data forwarding may not work at all.' }
-} else {
-    Write-Warn2 'Could not uniquely locate the data-path root object; informational only.'
-}
+# ---- locate the preview records
+$bytes = [System.IO.File]::ReadAllBytes($level2)
+$text  = $enc.GetString($bytes)
 
-if ($structFail) {
-    Write-Head 'Result'
-    Write-Err2 'Structure check failed. Nothing was written.'
-    Write-Note 'Possible causes: VBridger changed its scene structure/names, or changed packaging format.'
-    Write-Note 'Send VBridger_Data\level2 plus globalgamemanagers back for re-analysis,'
-    Write-Note 'or restore a previous backup with -Restore.'
+$plan = @()
+$bad  = $false
+foreach ($name in $Targets) {
+    $r = Find-IsActive -Bytes $bytes -Text $text -Name $name
+    if (-not $r) {
+        Say 'FAIL' ('cannot identify a single GameObject record for "' + $name + '"')
+        $bad = $true
+        continue
+    }
+    $plan += @{ Name = $name; Offset = $r.Offset; Active = $r.Active }
+}
+if ($bad) {
+    Say 'FAIL' 'level2 does not look like the build this script knows. Nothing was written.'
+    Say '..' 'Repair it with Steam (Properties - Installed Files - Verify integrity),'
+    Say '..' 'or put a level2.bak_* file back by hand.'
     exit 1
 }
 
-# ---- plan
-Write-Head 'Plan'
-$todo = @($plan | Where-Object { $_.Active -eq 1 })
 foreach ($p in $plan) {
-    $act = 'already 0, nothing to do'
-    if ($p.Active -eq 1) { $act = 'will be set to 0 (rendering stops)' }
-    Write-Note ('  ' + $p.Name.PadRight(16) + ' active offset ' + $p.Offset + '  current=' + $p.Active + '  ' + $act)
+    $state = 'active=1, preview renders'
+    if ($p.Active -eq 0) { $state = 'active=0, already hidden' }
+    Say '..' ($p.Name.PadRight(16) + ' ' + $state)
 }
+$keep = Find-IsActive -Bytes $bytes -Text $text -Name $KeepName
+if ($keep) { Say '..' ($KeepName + ' active=' + $keep.Active + ' (data path, untouched)') }
 
-if ($todo.Count -eq 0) {
-    Write-Head 'Result'
-    Write-Ok 'All preview models are already inactive, nothing to do (already patched?).'
-    exit 0
-}
-
-if ($DryRun) {
-    Write-Head 'Result (-DryRun, nothing written)'
-    Write-Ok ('Structure check passed. ' + $todo.Count + ' byte(s) would be changed.')
-    Write-Note 'Run again without -DryRun to apply the patch.'
-    exit 0
-}
+$todo = @($plan | Where-Object { $_.Active -eq 1 })
+if ($todo.Count -eq 0) { Say 'OK' 'already patched, nothing to do'; exit 0 }
+if ($Check) { Say 'OK' ([string]$todo.Count + ' byte(s) would be changed by a real run'); exit 0 }
 
 # ---- apply
-Write-Head 'Apply patch'
-$stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
-$backup = $level2 + '.bak_' + $stamp
-try {
-    Copy-Item -LiteralPath $level2 -Destination $backup -Force
-} catch {
-    Write-Err2 ('could not create the backup: ' + $_.Exception.Message)
-    Write-Note 'Nothing was written, level2 is untouched.'
-    exit 3
-}
-if ((Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ne $origHash) {
-    Write-Err2 'the backup does not match level2, nothing was written.'
-    Write-Note ('delete ' + (Split-Path $backup -Leaf) + ' and run again.')
-    exit 3
-}
-Write-Ok ('backup created: ' + $backup)
+$backup = $level2 + '.bak_' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+try { Copy-Item -LiteralPath $level2 -Destination $backup -Force }
+catch { Say 'FAIL' ('backup failed: ' + $_.Exception.Message); exit 3 }
+Say '..' ('backup: ' + (Split-Path $backup -Leaf))
 
-$new = New-Object byte[] $origSize
-[Array]::Copy($bytes, 0, $new, 0, $origSize)
+$new = [byte[]]$bytes.Clone()
 foreach ($p in $todo) { $new[$p.Offset] = 0 }
-
-try {
-    Set-FileAtomic -Path $level2 -Bytes $new
-} catch {
-    Write-Err2 ('write failed: ' + $_.Exception.Message)
-    Write-Note ('original is backed up at ' + $backup + ' (-Restore also works)')
+try { [System.IO.File]::WriteAllBytes($level2, $new) }
+catch {
+    Say 'FAIL' ('write failed: ' + $_.Exception.Message + ' - is VBridger still running?')
+    Say '..' ('backup kept: ' + (Split-Path $backup -Leaf))
     exit 3
 }
 
 # ---- verify
-Write-Head 'Verify'
-$after = [System.IO.File]::ReadAllBytes($level2)
-$afterText = Get-Latin1String -Bytes $after
-$okAll = $true
-if ($after.Length -ne $origSize) {
-    Write-Err2 ('file size changed: ' + $origSize + ' -> ' + $after.Length)
-    $okAll = $false
+try {
+    $after     = [System.IO.File]::ReadAllBytes($level2)
+    $afterText = $enc.GetString($after)
+} catch {
+    Say 'FAIL' ('cannot read level2 back: ' + $_.Exception.Message)
+    Say '..' ('backup kept: ' + (Split-Path $backup -Leaf))
+    exit 3
 }
-foreach ($p in $plan) {
-    $chk = @(Get-RecordCandidates -Bytes $after -Text $afterText -Name $p.Name | Where-Object { $_.Valid })
-    if ($chk.Count -eq 1) {
-        if ($chk[0].Active -eq 0) {
-            Write-Ok ($p.Name + ' active=0 (rendering stopped)')
-        } else {
-            Write-Err2 ($p.Name + ' active=' + $chk[0].Active + ', patch did not take effect')
-            $okAll = $false
-        }
-    } else {
-        Write-Err2 ($p.Name + ': could not locate record during verification')
-        $okAll = $false
-    }
+$ok = ($after.Length -eq $bytes.Length)
+foreach ($p in $todo) {
+    $r = Find-IsActive -Bytes $after -Text $afterText -Name $p.Name
+    if (-not $r -or $r.Active -ne 0) { $ok = $false }
 }
-$keepAfter = @(Get-RecordCandidates -Bytes $after -Text $afterText -Name $KeepActiveName | Where-Object { $_.Valid })
-if ($keepAfter.Count -eq 1 -and $keepAfter[0].Active -eq 1) {
-    Write-Ok ('data-path root object ' + $KeepActiveName + ' still active=1')
-} else {
-    Write-Warn2 'data-path root object looks wrong, please -Restore and report.'
-}
-
-if (-not $okAll) {
-    Write-Err2 'Verification failed, rolling back...'
-    try {
-        Set-FileAtomic -Path $level2 -Bytes $bytes
-    } catch {
-        Write-Err2 ('automatic rollback failed: ' + $_.Exception.Message)
-        Write-Note ('copy ' + $backup + ' over level2 by hand.')
-        exit 3
-    }
-    Remove-PatchState
-    Write-Note ('rolled back to ' + $backup)
+if (-not $ok) {
+    Say 'FAIL' 'verification failed, copying the backup back'
+    try { Copy-Item -LiteralPath $backup -Destination $level2 -Force }
+    catch { Say 'FAIL' ('could not copy the backup back: ' + $_.Exception.Message) }
+    Say '..' ('backup kept: ' + (Split-Path $backup -Leaf))
     exit 3
 }
 
-# remember fingerprint so a later run can tell whether VBridger was updated
-try {
-    $state = [pscustomobject]@{
-        PatchedAt    = (Get-Date).ToString('s')
-        InstallDir   = $root
-        UnityVersion = $ggmVer
-        Level2Before = [pscustomobject]@{ Size = $origSize; Sha256 = $origHash }
-        PatchedNames = @($todo | ForEach-Object { $_.Name })
-    }
-    ($state | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $script:StatePath -Encoding UTF8
-    Write-Note ('patch state saved: ' + $script:StatePath)
-} catch {
-    Write-Note '(could not save patch state file, patch itself is fine)'
-}
-
-Write-Head 'Done'
-Write-Ok 'Patch applied: the 3D preview model no longer renders; the data pipeline is unchanged.'
-Write-Note 'Expected: empty/black preview panel in VBridger, while iFacialMocap input, VMC (default 39539) and VTS output keep working.'
-Write-Note 'A Steam update overwrites this change - just run this script again afterwards (structure is re-validated).'
-Write-Note ('Rollback: -Restore  (backup: ' + (Split-Path $backup -Leaf) + ')')
+Say 'OK' 'patched: the 3D preview model no longer renders, the data pipeline is unchanged'
+Say '..' ('rollback: -Restore  (backup: ' + (Split-Path $backup -Leaf) + ')')
 exit 0
