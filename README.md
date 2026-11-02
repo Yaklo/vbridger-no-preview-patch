@@ -109,7 +109,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 
 # roll back
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
+
+# run the script from anywhere, without copying it into the VBridger folder
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -InstallDir "D:\Steam\steamapps\common\VBridger" -DryRun
 ```
+
+| parameter | what it does |
+|-----------|--------------|
+| `-DryRun` | check only, write nothing |
+| `-Restore` | copy the newest `level2.bak_*` back over `level2` |
+| `-InstallDir <path>` | point at the VBridger folder instead of looking next to the script, so the script can live anywhere; the path is recorded in `VBridgerPatchState.json` |
+| `-Force` | proceed while VBridger is running, and accept a backup that looks like it belongs to a different build |
 
 ## Rollback
 
@@ -149,6 +159,9 @@ see which field moved. It never writes blind.
   backup that does not match the installed build (size, Unity version, or the SHA-256 recorded
   in `VBridgerPatchState.json`) is refused unless you pass `-Force`.
 - **Audit trail** in `VBridgerPatchState.json` (path, timestamp, Unity version, SHA-256 before).
+- **Rollback cleans up after itself**: a successful `-Restore`, and the automatic rollback after
+  a failed verification, delete `VBridgerPatchState.json` - it describes a patch that no longer
+  exists, and a leftover `Level2Before` hash would make the next rollback look suspicious.
 - No network, no elevation, no service, no driver.
 
 ## What this patch does not do

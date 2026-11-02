@@ -98,7 +98,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 
 # 回滚
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
+
+# 脚本放在任何位置都能跑，不必复制进 VBridger 目录
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -InstallDir "D:\Steam\steamapps\common\VBridger" -DryRun
 ```
+
+| 参数 | 作用 |
+|------|------|
+| `-DryRun` | 只检查，不写入 |
+| `-Restore` | 把最新的 `level2.bak_*` 复制回 `level2` |
+| `-InstallDir <路径>` | 直接指定 VBridger 目录，脚本不必放在那里；该路径会记进 `VBridgerPatchState.json` |
+| `-Force` | VBridger 仍在运行时继续，以及接受"看起来属于别的版本"的备份（见「安全设计」） |
 
 ## 回滚
 
@@ -133,6 +143,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
   时间戳取最新的一份；如果这份备份和当前安装的版本对不上（大小、Unity 版本、或
   `VBridgerPatchState.json` 里记录的 SHA-256），会拒绝还原并要求加 `-Force`。
 - **留痕**：`VBridgerPatchState.json` 记录路径、时间、Unity 版本、改前 SHA-256。
+- **回滚会顺手清理**：`-Restore` 成功、以及写后复验失败触发的自动回滚，都会删掉
+  `VBridgerPatchState.json` —— 它描述的补丁已经不存在了；留着旧的 `Level2Before`
+  哈希反而会让下一次回滚显得"可疑"。
 - 不联网、不提权、不装服务/驱动。
 
 ## 它不做什么

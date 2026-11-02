@@ -19,6 +19,9 @@
         update. It picks the newest backup by the timestamp in its file name
         and refuses one that belongs to a different build unless -Force is
         given.
+      * Rolling back (and the automatic rollback after a failed verification)
+        deletes VBridgerPatchState.json, so a stale fingerprint cannot make the
+        next -Restore look like a cross-version backup.
       * Automatic backup: level2 -> level2.bak_<timestamp>, restore with -Restore.
       * -DryRun checks only, never writes.
       * Post-write verification; on mismatch it rolls back automatically.
@@ -157,13 +160,29 @@ function Show-Candidates {
     }
 }
 
+# The state file only describes an applied patch. Once level2 is rolled back it
+# is stale, and its Level2Before entry would make the next -Restore look like a
+# cross-version backup. Drop it whenever the patch is undone.
+function Remove-PatchState {
+    if (-not $PSScriptRoot) { return }
+    $sp = Join-Path $PSScriptRoot 'VBridgerPatchState.json'
+    if (-not (Test-Path -LiteralPath $sp -PathType Leaf)) { return }
+    try {
+        Remove-Item -LiteralPath $sp -Force
+        Write-Note 'patch state file removed (it described the patch that was just undone)'
+    } catch {
+        Write-Note '(could not remove VBridgerPatchState.json, harmless)'
+    }
+}
+
 # ============================================================== main flow
 $root = Resolve-VbRoot -Given $InstallDir
 if (-not $root) {
     Write-Err2 'No VBridger install found in this script folder.'
     Write-Note ('script folder: ' + $PSScriptRoot)
     Write-Note 'Expected VBridger_Data\level2 inside that same folder.'
-    Write-Note 'Fix: copy Patch-VBridgerNoPreview.ps1 and VBridger-NoPreview.cmd'
+    Write-Note 'Fix: copy Patch-VBridgerNoPreview.ps1 and one launcher'
+    Write-Note '     (VBridger-NoPreview.cmd, or VBridger-NoPreview-zh.cmd for a Chinese menu)'
     Write-Note '     into the VBridger folder (next to VBridger.exe), then run again.'
     Write-Note 'Or point at it once with: -InstallDir "<path to VBridger folder>"'
     exit 2
@@ -243,6 +262,7 @@ if ($Restore) {
     $bHash = (Get-FileHash -LiteralPath $b.FullName -Algorithm SHA256).Hash
     if ($bHash -eq $origHash) {
         Write-Ok 'level2 already matches this backup, nothing to restore.'
+        Remove-PatchState
         exit 0
     }
 
@@ -282,6 +302,7 @@ if ($Restore) {
     }
 
     Copy-Item -LiteralPath $b.FullName -Destination $level2 -Force
+    Remove-PatchState
     $rAfter = [System.IO.File]::ReadAllBytes($level2)
     $rText = Get-Latin1String -Bytes $rAfter
     $chk = @(Get-RecordCandidates -Bytes $rAfter -Text $rText -Name 'BridgitFullbody' | Where-Object { $_.Valid })
@@ -419,6 +440,7 @@ if ($keepAfter.Count -eq 1 -and $keepAfter[0].Active -eq 1) {
 if (-not $okAll) {
     Write-Err2 'Verification failed, rolling back...'
     Copy-Item -LiteralPath $backup -Destination $level2 -Force
+    Remove-PatchState
     Write-Note ('rolled back to ' + $backup)
     exit 3
 }
