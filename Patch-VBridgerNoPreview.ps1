@@ -21,9 +21,11 @@
         given.
       * Rolling back (and the automatic rollback after a failed verification)
         deletes VBridgerPatchState.json, so a stale fingerprint cannot make the
-        next -Restore look like a cross-version backup.
+        next -Restore look like a cross-version backup. The file lives in
+        VBridger_Data, next to level2.
       * Automatic backup: level2 -> level2.bak_<timestamp>, restore with -Restore.
-      * -DryRun checks only, never writes.
+      * -DryRun checks only, never writes. That includes -Restore, which then
+        reports what a rollback would do instead of overwriting level2.
       * Post-write verification; on mismatch it rolls back automatically.
 
     Where: put this file inside the VBridger install folder, next to
@@ -35,8 +37,8 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
 
-    Exit codes: 0 ok / nothing to do, 1 structure check failed,
-                2 environment error, 3 write or verify failed.
+    Exit codes: 0 ok / nothing to do, 1 structure check failed or restore
+                refused, 2 environment error, 3 write or verify failed.
 #>
 [CmdletBinding()]
 param(
@@ -163,16 +165,54 @@ function Show-Candidates {
 # The state file only describes an applied patch. Once level2 is rolled back it
 # is stale, and its Level2Before entry would make the next -Restore look like a
 # cross-version backup. Drop it whenever the patch is undone.
+# The file follows the install, not the script, so -InstallDir and a second copy
+# of this script still see the same record. Older versions kept it next to the
+# script; that location is read and cleaned up as well.
+function Get-PatchStatePaths {
+    $out = @()
+    if ($script:StatePath) { $out += $script:StatePath }
+    if ($script:LegacyStatePath) { $out += $script:LegacyStatePath }
+    return @($out | Select-Object -Unique)
+}
+
 function Remove-PatchState {
-    if (-not $PSScriptRoot) { return }
-    $sp = Join-Path $PSScriptRoot 'VBridgerPatchState.json'
-    if (-not (Test-Path -LiteralPath $sp -PathType Leaf)) { return }
-    try {
-        Remove-Item -LiteralPath $sp -Force
-        Write-Note 'patch state file removed (it described the patch that was just undone)'
-    } catch {
-        Write-Note '(could not remove VBridgerPatchState.json, harmless)'
+    $removed = $false
+    foreach ($sp in (Get-PatchStatePaths)) {
+        if (-not (Test-Path -LiteralPath $sp -PathType Leaf)) { continue }
+        try {
+            Remove-Item -LiteralPath $sp -Force
+            $removed = $true
+        } catch {
+            Write-Note ('(could not remove ' + (Split-Path $sp -Leaf) + ', harmless)')
+        }
     }
+    if ($removed) { Write-Note 'patch state file removed (it described the patch that was just undone)' }
+}
+
+function Get-PatchStateData {
+    foreach ($sp in (Get-PatchStatePaths)) {
+        if (-not (Test-Path -LiteralPath $sp -PathType Leaf)) { continue }
+        try { return (Get-Content -LiteralPath $sp -Raw | ConvertFrom-Json) } catch { return $null }
+    }
+    return $null
+}
+
+# Write through a temporary file so a crash mid-write cannot leave a truncated
+# level2 behind: on NTFS File::Replace swaps the two in one step.
+function Set-FileAtomic {
+    param([string]$Path, [byte[]]$Bytes)
+    $tmp = $Path + '.tmp'
+    [System.IO.File]::WriteAllBytes($tmp, $Bytes)
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        try {
+            [System.IO.File]::Replace($tmp, $Path, $null)
+            return
+        } catch {
+            # not NTFS, or the target is held open: fall back to a plain copy
+        }
+    }
+    Copy-Item -LiteralPath $tmp -Destination $Path -Force
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 }
 
 # ============================================================== main flow
@@ -190,6 +230,9 @@ if (-not $root) {
 
 $dataDir = Join-Path $root 'VBridger_Data'
 $level2  = Join-Path $dataDir 'level2'
+$script:StatePath = Join-Path $dataDir 'VBridgerPatchState.json'
+$script:LegacyStatePath = $null
+if ($PSScriptRoot) { $script:LegacyStatePath = Join-Path $PSScriptRoot 'VBridgerPatchState.json' }
 $ggm     = Join-Path $dataDir 'globalgamemanagers'
 $managed = Join-Path $dataDir 'Managed\Assembly-CSharp.dll'
 
@@ -262,7 +305,7 @@ if ($Restore) {
     $bHash = (Get-FileHash -LiteralPath $b.FullName -Algorithm SHA256).Hash
     if ($bHash -eq $origHash) {
         Write-Ok 'level2 already matches this backup, nothing to restore.'
-        Remove-PatchState
+        if (-not $DryRun) { Remove-PatchState }
         exit 0
     }
 
@@ -274,22 +317,42 @@ if ($Restore) {
     $bVer   = Get-UnityVersionFrom -Bytes $bBytes
     if ($b.Length -ne $origSize) {
         [void]$suspect.Add('size differs: backup ' + $b.Length + ' bytes, current level2 ' + $origSize + ' bytes')
+    } else {
+        # Strongest test: level2 must be exactly this backup with the preview
+        # flags cleared. Zero them in a copy of the backup and compare hashes.
+        # Anything else that differs means level2 was replaced - an update that
+        # keeps the same size and Unity version would slip past the cheap tests
+        # above and get an old build copied over a new one.
+        $bText  = Get-Latin1String -Bytes $bBytes
+        $expect = New-Object byte[] $origSize
+        [Array]::Copy($bBytes, 0, $expect, 0, $origSize)
+        foreach ($t in $ModelTargets) {
+            $bv = @(Get-RecordCandidates -Bytes $bBytes -Text $bText -Name $t.Name | Where-Object { $_.Valid })
+            if ($bv.Count -eq 1 -and $bv[0].Active -eq 1) { $expect[$bv[0].ActiveOffset] = 0 }
+        }
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $expectHash = [System.BitConverter]::ToString($sha.ComputeHash($expect)).Replace('-', '')
+        $sha.Dispose()
+        if ($expectHash -ne $origHash) {
+            $firstDiff = -1
+            $diffCount = 0
+            for ($i = 0; $i -lt $expect.Length; $i++) {
+                if ($bytes[$i] -ne $expect[$i]) {
+                    $diffCount++
+                    if ($firstDiff -lt 0) { $firstDiff = $i }
+                }
+            }
+            $where = ''
+            if ($firstDiff -ge 0) { $where = ' (' + $diffCount + ' byte(s) differ, first at offset ' + $firstDiff + ')' }
+            [void]$suspect.Add('level2 is not this backup with the preview patch applied' + $where)
+        }
     }
     if ($bVer -and $ggmVer -and ($bVer -ne $ggmVer)) {
         [void]$suspect.Add('Unity version differs: backup ' + $bVer + ', installed ' + $ggmVer)
     }
-    if ($PSScriptRoot) {
-        $statePath = Join-Path $PSScriptRoot 'VBridgerPatchState.json'
-        if (Test-Path -LiteralPath $statePath -PathType Leaf) {
-            try {
-                $st = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-                if ($st.Level2Before -and $st.Level2Before.Sha256 -and ($st.Level2Before.Sha256 -ne $bHash)) {
-                    [void]$suspect.Add('backup is not the original recorded in VBridgerPatchState.json')
-                }
-            } catch {
-                Write-Note '(patch state file unreadable, cross-check skipped)'
-            }
-        }
+    $st = Get-PatchStateData
+    if ($st -and $st.Level2Before -and $st.Level2Before.Sha256 -and ($st.Level2Before.Sha256 -ne $bHash)) {
+        [void]$suspect.Add('backup is not the original recorded in VBridgerPatchState.json')
     }
     if ($suspect.Count -gt 0) {
         foreach ($s in $suspect) { Write-Warn2 $s }
@@ -301,7 +364,19 @@ if ($Restore) {
         Write-Warn2 'Continuing anyway because -Force was given.'
     }
 
-    Copy-Item -LiteralPath $b.FullName -Destination $level2 -Force
+    if ($DryRun) {
+        Write-Head 'Result (-DryRun, nothing written)'
+        Write-Ok ('A real run would copy ' + $b.Name + ' over level2 and re-check the preview object.')
+        exit 0
+    }
+
+    try {
+        Set-FileAtomic -Path $level2 -Bytes $bBytes
+    } catch {
+        Write-Err2 ('restore failed: ' + $_.Exception.Message)
+        Write-Note ('the backup is still at ' + $b.FullName + ' - run -Restore again.')
+        exit 3
+    }
     Remove-PatchState
     $rAfter = [System.IO.File]::ReadAllBytes($level2)
     $rText = Get-Latin1String -Bytes $rAfter
@@ -392,7 +467,18 @@ if ($DryRun) {
 Write-Head 'Apply patch'
 $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backup = $level2 + '.bak_' + $stamp
-Copy-Item -LiteralPath $level2 -Destination $backup -Force
+try {
+    Copy-Item -LiteralPath $level2 -Destination $backup -Force
+} catch {
+    Write-Err2 ('could not create the backup: ' + $_.Exception.Message)
+    Write-Note 'Nothing was written, level2 is untouched.'
+    exit 3
+}
+if ((Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ne $origHash) {
+    Write-Err2 'the backup does not match level2, nothing was written.'
+    Write-Note ('delete ' + (Split-Path $backup -Leaf) + ' and run again.')
+    exit 3
+}
 Write-Ok ('backup created: ' + $backup)
 
 $new = New-Object byte[] $origSize
@@ -400,7 +486,7 @@ $new = New-Object byte[] $origSize
 foreach ($p in $todo) { $new[$p.Offset] = 0 }
 
 try {
-    [System.IO.File]::WriteAllBytes($level2, $new)
+    Set-FileAtomic -Path $level2 -Bytes $new
 } catch {
     Write-Err2 ('write failed: ' + $_.Exception.Message)
     Write-Note ('original is backed up at ' + $backup + ' (-Restore also works)')
@@ -439,7 +525,13 @@ if ($keepAfter.Count -eq 1 -and $keepAfter[0].Active -eq 1) {
 
 if (-not $okAll) {
     Write-Err2 'Verification failed, rolling back...'
-    Copy-Item -LiteralPath $backup -Destination $level2 -Force
+    try {
+        Set-FileAtomic -Path $level2 -Bytes $bytes
+    } catch {
+        Write-Err2 ('automatic rollback failed: ' + $_.Exception.Message)
+        Write-Note ('copy ' + $backup + ' over level2 by hand.')
+        exit 3
+    }
     Remove-PatchState
     Write-Note ('rolled back to ' + $backup)
     exit 3
@@ -447,18 +539,15 @@ if (-not $okAll) {
 
 # remember fingerprint so a later run can tell whether VBridger was updated
 try {
-    if ($PSScriptRoot) {
-        $statePath = Join-Path $PSScriptRoot 'VBridgerPatchState.json'
-        $state = [pscustomobject]@{
-            PatchedAt    = (Get-Date).ToString('s')
-            InstallDir   = $root
-            UnityVersion = $ggmVer
-            Level2Before = [pscustomobject]@{ Size = $origSize; Sha256 = $origHash }
-            PatchedNames = @($todo | ForEach-Object { $_.Name })
-        }
-        ($state | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $statePath -Encoding UTF8
-        Write-Note ('patch state saved: ' + $statePath)
+    $state = [pscustomobject]@{
+        PatchedAt    = (Get-Date).ToString('s')
+        InstallDir   = $root
+        UnityVersion = $ggmVer
+        Level2Before = [pscustomobject]@{ Size = $origSize; Sha256 = $origHash }
+        PatchedNames = @($todo | ForEach-Object { $_.Name })
     }
+    ($state | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $script:StatePath -Encoding UTF8
+    Write-Note ('patch state saved: ' + $script:StatePath)
 } catch {
     Write-Note '(could not save patch state file, patch itself is fine)'
 }
