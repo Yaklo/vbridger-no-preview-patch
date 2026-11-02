@@ -107,7 +107,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 
 | 参数 | 作用 |
 |------|------|
-| `-DryRun` | 只检查，不写入；与 `-Restore` 组合时只报告回滚会怎么做，不会真的覆盖 `level2` |
+| `-DryRun` | 只检查，不写入；与 `-Restore` 组合时只报告回滚会怎么做，不会真的覆盖 `level2`；VBridger 开着也能跑 |
 | `-Restore` | 把最新的 `level2.bak_*` 复制回 `level2` |
 | `-InstallDir <路径>` | 直接指定 VBridger 目录，脚本不必放在那里；该路径会记进 `VBridgerPatchState.json` |
 | `-Force` | VBridger 仍在运行时继续，以及接受"看起来属于别的版本"的备份（见「安全设计」） |
@@ -145,6 +145,7 @@ VBridger，否则会被拒绝（退出码 `2`，`-Force` 可强行继续）。�
   GameObject，另一条是别的对象。
 - **自动备份** `level2.bak_<yyyyMMdd-HHmmss>`，改动前就落盘，复制完立刻和 `level2` 比对哈希。
 - **原子写入**：`level2` 先写到临时文件再用 `File::Replace` 换上去，中途被打断也不会留下半截文件。
+  文件系统不支持替换（或文件被占用）时会退化成普通复制。
 - **只写 1 个字节**，文件长度不变，文件内部没有校验和会被破坏。
 - **写后复验**，对不上自动还原备份并以 `3` 退出。
 - **回滚不受结构校验阻挡**：`-Restore` 在校验之前就处理，升级后依然可用。备份按文件名里的

@@ -26,6 +26,10 @@
       * Automatic backup: level2 -> level2.bak_<timestamp>, restore with -Restore.
       * -DryRun checks only, never writes. That includes -Restore, which then
         reports what a rollback would do instead of overwriting level2.
+        A dry run is allowed while VBridger is open; a real run is not.
+      * Writes go through a temp file and File::Replace, so an interrupted run
+        cannot leave a half-written level2. Filesystems without replace support
+        fall back to a plain copy.
       * Post-write verification; on mismatch it rolls back automatically.
 
     Where: put this file inside the VBridger install folder, next to
@@ -36,6 +40,7 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -DryRun
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore -DryRun
 
     Exit codes: 0 ok / nothing to do, 1 structure check failed or restore
                 refused, 2 environment error, 3 write or verify failed.
@@ -80,7 +85,10 @@ function Resolve-VbRoot {
     foreach ($c in $cands) {
         if ([string]::IsNullOrWhiteSpace($c)) { continue }
         if (Test-Path -LiteralPath $c -PathType Container) {
-            if (Test-Path -LiteralPath (Join-Path $c 'VBridger_Data\level2') -PathType Leaf) {
+            # VBridger_Data is the install marker, not level2 itself: if level2 is
+            # missing the main flow explains how to put a backup back, which is
+            # more useful than "no install found here".
+            if (Test-Path -LiteralPath (Join-Path $c 'VBridger_Data') -PathType Container) {
                 return (Resolve-Path -LiteralPath $c).Path
             }
         }
@@ -239,10 +247,19 @@ $managed = Join-Path $dataDir 'Managed\Assembly-CSharp.dll'
 Write-Head 'Environment'
 Write-Ok ('install folder: ' + $root)
 foreach ($f in @($level2, $ggm)) {
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) {
-        Write-Err2 ('missing file: ' + $f)
-        exit 2
+    if (Test-Path -LiteralPath $f -PathType Leaf) { continue }
+    Write-Err2 ('missing file: ' + $f)
+    if ($f -eq $level2) {
+        # No level2 means no restore either - the script will not guess. Point at
+        # the backup instead, restoring it by hand is a plain file copy.
+        $anyBak = @(Get-ChildItem -LiteralPath $dataDir -Filter 'level2.bak_*' -File | Sort-Object -Property Name -Descending)
+        if ($anyBak.Count -gt 0) {
+            Write-Note 'A backup is available; putting it back by hand is enough:'
+            Write-Note ('  copy "' + $anyBak[0].FullName + '" "' + $level2 + '"')
+            Write-Note 'then run this script again.'
+        }
     }
+    exit 2
 }
 Write-Ok 'VBridger_Data\level2 and globalgamemanagers found'
 if (-not (Test-Path -LiteralPath $managed -PathType Leaf)) {
@@ -251,11 +268,15 @@ if (-not (Test-Path -LiteralPath $managed -PathType Leaf)) {
 
 $proc = Get-Process -Name 'VBridger' -ErrorAction SilentlyContinue
 if ($proc -and -not $Restore) {
-    if (-not $Force) {
+    if ($DryRun) {
+        # A dry run only reads, so an open VBridger is harmless here.
+        Write-Note 'VBridger is running; -DryRun writes nothing, so this is fine.'
+    } elseif (-not $Force) {
         Write-Err2 'VBridger is running. Exit VBridger completely first (or add -Force).'
         exit 2
+    } else {
+        Write-Warn2 'VBridger is running, continuing because -Force was given.'
     }
-    Write-Warn2 'VBridger is running, continuing because -Force was given.'
 }
 
 $bytes = [System.IO.File]::ReadAllBytes($level2)
@@ -297,7 +318,7 @@ if ($Restore) {
     }
     $b = $baks[0]
     Write-Note ('using backup: ' + $b.Name + '  (' + $b.Length + ' bytes)')
-    if ($proc -and -not $Force) {
+    if ($proc -and -not $Force -and -not $DryRun) {
         Write-Err2 'VBridger is running. Exit it first (or add -Force).'
         exit 2
     }

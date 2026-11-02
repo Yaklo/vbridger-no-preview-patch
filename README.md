@@ -118,7 +118,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 
 | parameter | what it does |
 |-----------|--------------|
-| `-DryRun` | check only, write nothing; combined with `-Restore` it reports what a rollback would do instead of overwriting `level2` |
+| `-DryRun` | check only, write nothing; combined with `-Restore` it reports what a rollback would do instead of overwriting `level2`; works even while VBridger is open |
 | `-Restore` | copy the newest `level2.bak_*` back over `level2` |
 | `-InstallDir <path>` | point at the VBridger folder instead of looking next to the script, so the script can live anywhere; the path is recorded in `VBridgerPatchState.json` |
 | `-Force` | proceed while VBridger is running, and accept a backup that looks like it belongs to a different build |
@@ -162,6 +162,8 @@ see which field moved. It never writes blind.
   against `level2` right after the copy.
 - **Atomic writes**: `level2` is written through a temporary file and swapped in with
   `File::Replace`, so an interrupted run cannot leave a half-written file behind.
+  On filesystems without replace support (or if the file is held open) the swap falls back
+  to a plain copy.
 - **One byte written**, file length unchanged, no checksum in the file to invalidate.
 - **Post-write verification** by re-parsing; on mismatch it restores the backup automatically
   and exits `3`.
