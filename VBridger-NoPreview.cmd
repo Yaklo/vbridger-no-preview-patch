@@ -5,12 +5,13 @@ cd /d "%~dp0"
 set "PS1=%~dp0Patch-VBridgerNoPreview.ps1"
 
 if not exist "%PS1%" (
-    echo [ERROR] Patch-VBridgerNoPreview.ps1 必须与本文件同目录 / must sit next to this file.
+    echo [ERROR] Patch-VBridgerNoPreview.ps1 must sit in this same folder.
+    echo [错误]  Patch-VBridgerNoPreview.ps1 必须与本文件放在同一目录。
     pause
     exit /b 2
 )
 
-rem 也支持直接带参数: VBridger-NoPreview.cmd check / apply / restore
+rem 也支持直接带参数 / direct arguments: check / apply / restore
 if /i "%~1"=="check"   goto :check
 if /i "%~1"=="apply"   goto :apply
 if /i "%~1"=="restore" goto :restore
@@ -18,16 +19,18 @@ if /i "%~1"=="restore" goto :restore
 :menu
 cls
 echo ==========================================================
-echo    VBridger 3D 预览补丁 / preview patch
+echo    VBridger 3D 预览补丁 / no-preview patch   -  unofficial
 echo ==========================================================
-echo    1. 自检 - 只检查，不写入文件      dry-run
-echo    2. 打补丁 - 改 1 个字节停渲染    apply
-echo    3. 回滚 - 用备份还原 level2      rollback
-echo    0. 退出                          exit
+echo.
+echo    1. 自检    check     - 只检查，不写入文件 / dry run
+echo    2. 打补丁  apply     - 改 1 个字节，停止渲染 / patch it
+echo    3. 回滚    rollback  - 用备份还原 level2 / restore it
+echo    0. 退出    exit
+echo.
 echo ==========================================================
 echo.
 set "pick="
-set /p "pick=请输入编号 [0-3] / enter number: "
+set /p "pick=请输入编号 / enter number [0-3]: "
 if "%pick%"=="1" goto :check
 if "%pick%"=="2" goto :apply
 if "%pick%"=="3" goto :restore
@@ -39,7 +42,7 @@ goto :menu
 
 :check
 cls
-echo === 1. 自检 / dry-run (不写入任何文件) ===
+echo === 1. 自检 / dry run  -  不写入任何文件 / writes nothing ===
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -DryRun
 goto :back
@@ -48,11 +51,11 @@ goto :back
 cls
 echo === 2. 打补丁 / apply patch ===
 echo.
-echo 请先完全退出 VBridger，否则会被拒绝执行。
-echo Close VBridger completely before patching.
+echo 先完全退出 VBridger，否则会被拒绝执行。
+echo Close VBridger completely first, or the patch is refused.
 echo.
 set "yn="
-set /p "yn=确认执行? (Y/N): "
+set /p "yn=确认执行? / continue? (Y/N): "
 if /i not "%yn%"=="Y" goto :menu
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
@@ -62,11 +65,11 @@ goto :back
 cls
 echo === 3. 回滚 / rollback ===
 echo.
-echo 将用最新的 level2.bak_* 备份覆盖当前 level2。
-echo The newest level2.bak_* backup will be copied back over level2.
+echo 用最新的 level2.bak_* 备份覆盖当前 level2。
+echo The newest level2.bak_* backup is copied back over level2.
 echo.
 set "yn="
-set /p "yn=确认执行? (Y/N): "
+set /p "yn=确认执行? / continue? (Y/N): "
 if /i not "%yn%"=="Y" goto :menu
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -Restore

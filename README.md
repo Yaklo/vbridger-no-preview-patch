@@ -8,6 +8,46 @@ keeps working exactly as before.
 
 ---
 
+## Quick start
+
+**Before you start**
+
+- Close VBridger completely (tray icon included).
+- Put `Patch-VBridgerNoPreview.ps1` and `VBridger-NoPreview.cmd` into the **VBridger folder**
+  (the one containing `VBridger.exe` and `VBridger_Data\level2`). The script only looks for the
+  game files in that folder.
+- Windows with PowerShell 5.1 or newer (Windows 10/11 built-in is fine). No admin rights,
+  no network access.
+
+**Three steps**
+
+1. Copy those two files into the VBridger folder.
+2. Double-click `VBridger-NoPreview.cmd`. The menu is bilingual (Chinese / English):
+
+   ```text
+   ==========================================================
+      VBridger 3D 预览补丁 / no-preview patch   -  unofficial
+   ==========================================================
+
+      1. 自检    check     - 只检查，不写入文件 / dry run
+      2. 打补丁  apply     - 改 1 个字节，停止渲染 / patch it
+      3. 回滚    rollback  - 用备份还原 level2 / restore it
+      0. 退出    exit
+
+   ==========================================================
+
+   请输入编号 / enter number [0-3]:
+   ```
+
+3. Press `1` first (dry run) and check that the offsets and record classification match the
+   table below. Then press `2` to apply.
+
+After patching, the preview area of the VBridger window is expected to be empty/black — that is
+the whole point. Tracking input, Send Face Found Status, VMC output (default port 39539) and the
+VTube Studio WebSocket connection are unaffected.
+
+Direct arguments also work, handy for shortcuts: `VBridger-NoPreview.cmd check|apply|restore`.
+
 ## Why
 
 VBridger's actual job is to receive face-tracking data from a phone and forward it to other
@@ -15,9 +55,10 @@ software. The 3D character in the window is only a visual aid, but it stays full
 skinned (dozens of blend shapes) and renders every frame, forever. If you never look at it,
 that is pure waste: GPU time, heat, fan noise.
 
-There is no setting to turn the preview off. This patch disables the preview model objects in
-the Unity scene, so nothing gets drawn, while every script that receives and forwards data is
-untouched.
+There is no setting to turn the preview off (the "face" toggle in the gear overlay is a temporary
+switch, it is not persisted, and the preview comes back on every launch). This patch disables the
+preview model objects in the Unity scene, so nothing gets drawn, while every script that receives
+and forwards data is untouched.
 
 ## What it changes
 
@@ -41,29 +82,9 @@ Verified against the build whose `level2` is 412672 bytes with SHA-256
 `2F177FB02D57D1600E4DF65A13E5E92BAE951AC9181D4186FA61B9A7396E9B52`
 (Unity `2020.3.33f1`, Mono backend).
 
-## Requirements
+## Command line usage
 
-- Windows, PowerShell 5.1 or newer (Windows 10/11 built-in is fine).
-- VBridger installed through Steam (or the standalone `start_nosteam.bat` build — same files).
-- The patch must be **run from the VBridger folder** (the one containing `VBridger.exe` and
-  `VBridger_Data\level2`). No admin rights, no network access.
-
-## Usage
-
-### Option A — menu (easiest)
-
-1. Close VBridger completely.
-2. Copy `Patch-VBridgerNoPreview.ps1` and `VBridger-NoPreview.cmd` into the VBridger folder.
-3. Double-click `VBridger-NoPreview.cmd` and pick:
-   - `1` check only (dry run, writes nothing)
-   - `2` apply the patch
-   - `3` roll back from the newest backup
-
-The menu text is Chinese (`VBridger-NoPreview.cmd` is GBK-encoded on purpose, see
-`.gitattributes`); the numbers work regardless of language. Direct arguments also work:
-`VBridger-NoPreview.cmd check|apply|restore`.
-
-### Option B — PowerShell directly
+If you prefer not to use the menu:
 
 ```powershell
 # check only, never writes
@@ -75,10 +96,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 # roll back
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
 ```
-
-After patching, the preview area of the VBridger window is expected to be empty/black.
-That is the whole point: tracking input, Send Face Found Status, VMC output (default port
-39539) and the VTube Studio WebSocket connection are unaffected.
 
 ## Rollback
 

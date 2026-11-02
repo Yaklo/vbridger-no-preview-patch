@@ -7,6 +7,42 @@
 
 ---
 
+## 快速开始
+
+**前置条件**
+
+- 完全退出 VBridger（托盘、任务栏都不要留）。
+- 把 `Patch-VBridgerNoPreview.ps1` 和 `VBridger-NoPreview.cmd` 放进 **VBridger 安装目录**
+  （与 `VBridger.exe`、`VBridger_Data\level2` 同级）。脚本只在这个目录里找游戏文件。
+- Windows + PowerShell 5.1 及以上（Win10/11 自带即可）。不需要管理员权限，不联网。
+
+**三步搞定**
+
+1. 复制上面两个文件到 VBridger 目录。
+2. 双击 `VBridger-NoPreview.cmd`，菜单是中英双语的：
+
+   ```text
+   ==========================================================
+      VBridger 3D 预览补丁 / no-preview patch   -  unofficial
+   ==========================================================
+
+      1. 自检    check     - 只检查，不写入文件 / dry run
+      2. 打补丁  apply     - 改 1 个字节，停止渲染 / patch it
+      3. 回滚    rollback  - 用备份还原 level2 / restore it
+      0. 退出    exit
+
+   ==========================================================
+
+   请输入编号 / enter number [0-3]:
+   ```
+
+3. 先按 `1` 自检，看输出里的偏移和记录判别是否与下表一致；确认无误再按 `2` 打补丁。
+
+打完补丁后，VBridger 窗口里的预览区会变成空白/黑屏，**这是预期效果**。面捕输入、
+Send Face Found Status、VMC 输出（默认端口 39539）、VTube Studio WebSocket 连接都不受影响。
+
+菜单也支持直接传参，方便做快捷方式：`VBridger-NoPreview.cmd check|apply|restore`。
+
 ## 为什么需要它
 
 VBridger 的本职工作是**接收手机传来的面捕数据并转发给别的软件**。窗口里那个 3D 角色只是
@@ -37,27 +73,9 @@ VBridger 设置里并没有关闭预览的开关（齿轮菜单里的"face"只�
 `2F177FB02D57D1600E4DF65A13E5E92BAE951AC9181D4186FA61B9A7396E9B52`
 的版本上验证（Unity `2020.3.33f1`，Mono 后端）。
 
-## 环境要求
+## 命令行用法
 
-- Windows + PowerShell 5.1 及以上（Win10/11 自带即可）。
-- 通过 Steam 安装的 VBridger，或用 `start_nosteam.bat` 启动的独立版（文件完全一样）。
-- 脚本必须放在 **VBridger 安装目录**里（与 `VBridger.exe`、`VBridger_Data\level2` 同级）。
-  不需要管理员权限，不联网。
-
-## 用法
-
-### 方式一：菜单（最省事）
-
-1. 完全退出 VBridger。
-2. 把 `Patch-VBridgerNoPreview.ps1` 和 `VBridger-NoPreview.cmd` 复制到 VBridger 目录。
-3. 双击 `VBridger-NoPreview.cmd`：
-   - `1` 自检（只检查，不写任何文件）
-   - `2` 打补丁
-   - `3` 用备份回滚
-
-也支持直接传参：`VBridger-NoPreview.cmd check|apply|restore`。
-
-### 方式二：直接跑 PowerShell
+不想用菜单，也可以直接跑 PowerShell：
 
 ```powershell
 # 只检查，不写入
@@ -69,9 +87,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps
 # 回滚
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-VBridgerNoPreview.ps1 -Restore
 ```
-
-打完补丁后，VBridger 窗口里的预览区会变成空白/黑屏，**这是预期效果**。面捕输入、
-Send Face Found Status、VMC 输出（默认端口 39539）、VTube Studio WebSocket 连接都不受影响。
 
 ## 回滚
 
